@@ -1,21 +1,21 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import Footer from "@/components/Footer";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const timeSlots = ["8:00", "9:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
 
-type ScheduleEntry = {
+interface ScheduleEntry {
   course: string;
   code: string;
   room: string;
   instructor: string;
   color: string;
   span: number;
-};
+}
 
-const sampleSchedule: Record<string, Record<string, ScheduleEntry>> = {
+const sampleSchedule: Record<string, ScheduleEntry> = {
   "Monday-9:00": { course: "Data Structures", code: "UCS301", room: "LT-101", instructor: "Dr. Gupta", color: "bg-primary/15 text-primary border-primary/30", span: 2 },
   "Monday-14:00": { course: "Linear Algebra", code: "UMA031", room: "LT-205", instructor: "Dr. Verma", color: "bg-accent/15 text-accent border-accent/30", span: 2 },
   "Tuesday-10:00": { course: "Operating Systems", code: "UCS503", room: "LT-103", instructor: "Dr. Kaur", color: "bg-crimson-light/15 text-crimson-light border-crimson-light/30", span: 2 },
@@ -34,7 +34,6 @@ const Timetable = () => {
 
   const skipCells = new Set<string>();
 
-  // Pre-calculate skip cells
   for (const key of Object.keys(sampleSchedule)) {
     const [day, time] = key.split("-");
     const entry = sampleSchedule[key];
@@ -91,7 +90,7 @@ const Timetable = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {timeSlots.map((time, tIdx) => (
+                  {timeSlots.map((time) => (
                     <tr key={time} className="border-b border-border">
                       <td className="py-3 px-4 font-medium text-muted-foreground bg-muted/50 whitespace-nowrap">
                         {time}
