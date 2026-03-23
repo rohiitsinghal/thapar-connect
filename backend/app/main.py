@@ -25,9 +25,9 @@ app = FastAPI(
     title="University Timetable Scheduler",
     description=(
         "Constraint-based timetable generation system inspired by UniTime. "
-        "Uses local-search optimisation to satisfy hard and soft constraints."
+        "Uses Simulated Annealing optimisation to satisfy hard and soft constraints."
     ),
-    version="1.0.0",
+    version="2.0.0",
 )
 
 # Allow all origins for development; restrict in production
@@ -42,7 +42,7 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     """Create all database tables if they don't exist yet."""
-    logger.info("Creating database tables…")
+    logger.info("Creating database tables...")
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables ready.")
 

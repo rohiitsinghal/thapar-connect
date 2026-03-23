@@ -7,14 +7,12 @@ The scorer walks the placements and accumulates a penalty score.
 LOWER SCORE = BETTER TIMETABLE (like a cost function in optimisation).
 
 Penalties:
+  +50  per pair of same-subject lectures on the same day for a batch
+         (prevents "OS at 08:00 and 08:50" — should never happen)
   +10  per person/batch with >4 consecutive lectures in a day
   +5   per day where a teacher's lecture count deviates from their daily average
-  +3   per gap of ≥2 free slots between two lectures in a batch's day
+  +3   per gap of >=2 free slots between two lectures in a batch's day
   +2   per day where a batch has more lectures than adjacent days (clustering)
-
-Design choice — why a penalty (minimisation) instead of a reward (maximisation):
-  Easier to reason about: zero means "perfect soft constraint satisfaction".
-  Local search clearly knows it is improving when the score decreases.
 """
 
 from dataclasses import dataclass
@@ -34,13 +32,38 @@ class Placement:
     teacher_id: int
     batch_id:   int
     room_id:    int
-    day:        int     # 0–4
-    slot:       int     # 0–10
+    day:        int     # 0-4
+    slot:       int     # 0-10
 
 
 # ---------------------------------------------------------------------------
 # Individual penalty functions
 # ---------------------------------------------------------------------------
+
+def _same_subject_same_day_penalty(placements: List[Placement]) -> int:
+    """
+    Heavy penalty when the same subject appears more than once on the same day
+    for the same batch.
+
+    Real universities never schedule two sessions of the same subject on the
+    same day — it wastes a day's slot budget and confuses students.
+
+    Penalty = 50 per violating duplicate (subject, batch, day) pair.
+    This is intentionally very high so SA almost never accepts such states.
+    """
+    penalty = 0
+
+    # Count (subject_id, batch_id, day) occurrences
+    counter: dict = defaultdict(int)
+    for p in placements:
+        counter[(p.subject_id, p.batch_id, p.day)] += 1
+
+    for count in counter.values():
+        if count > 1:
+            penalty += 50 * (count - 1)
+
+    return penalty
+
 
 def _consecutive_penalty(placements: List[Placement]) -> int:
     """
@@ -48,11 +71,10 @@ def _consecutive_penalty(placements: List[Placement]) -> int:
 
     We build a set of (entity_id, day, slot) and then for each (entity, day)
     combination count the longest run of consecutive slots.
-    Penalty = 10 × (run_length - 4) for each run > 4.
+    Penalty = 10 x (run_length - 4) for each run > 4.
     """
     penalty = 0
 
-    # Build slot sets keyed by (entity_id, day)
     teacher_slots: dict = defaultdict(set)
     batch_slots:   dict = defaultdict(set)
 
@@ -61,7 +83,6 @@ def _consecutive_penalty(placements: List[Placement]) -> int:
         batch_slots[(p.batch_id, p.day)].add(p.slot)
 
     def max_run(slot_set: set) -> int:
-        """Length of the longest consecutive run in a set of slot indices."""
         if not slot_set:
             return 0
         sorted_slots = sorted(slot_set)
@@ -94,18 +115,17 @@ def _teacher_balance_penalty(placements: List[Placement]) -> int:
     For each teacher, compute their total lectures and ideal daily load
     (total / 5 days).  Penalise each day that deviates by more than 1.
 
-    Penalty = 5 × abs(daily_count - ideal) for each day where deviation > 1.
+    Penalty = 5 x abs(daily_count - ideal) for each day where deviation > 1.
     """
     penalty = 0
 
-    # teacher_id → day → count
     teacher_day: dict = defaultdict(lambda: defaultdict(int))
     for p in placements:
         teacher_day[p.teacher_id][p.day] += 1
 
     for t_id, day_counts in teacher_day.items():
         total = sum(day_counts.values())
-        ideal = total / len(DAYS)           # float daily average
+        ideal = total / len(DAYS)
         for d in range(len(DAYS)):
             daily = day_counts.get(d, 0)
             deviation = abs(daily - ideal)
@@ -121,8 +141,6 @@ def _batch_gap_penalty(placements: List[Placement]) -> int:
 
     A gap = two or more consecutive free slots sandwiched between occupied
     slots.  Each such gap adds 3 to the penalty.
-
-    Example: batch has lectures at slots 1, 4 → gap of 2 free slots → +3.
     """
     penalty = 0
 
@@ -147,9 +165,8 @@ def _clustering_penalty(placements: List[Placement]) -> int:
     """
     Penalty for clustering a batch's lectures on few days.
 
-    Ideal: lectures spread as evenly as possible across the week.
-    We measure the standard-deviation-like spread: sum of squared deviations
-    from the mean.  Scaled by 2.
+    Measures sum of deviations from the mean daily load per batch.
+    Scaled by 2.
     """
     penalty = 0
 
@@ -176,10 +193,11 @@ def compute_penalty(placements: List[Placement]) -> int:
     """
     Compute the total soft-constraint penalty for a list of placements.
 
-    Returns an integer ≥ 0.  Zero means all soft constraints are satisfied.
+    Returns an integer >= 0.  Zero means all soft constraints are satisfied.
     """
     return (
-        _consecutive_penalty(placements)
+        _same_subject_same_day_penalty(placements)   # must be first — highest weight
+        + _consecutive_penalty(placements)
         + _teacher_balance_penalty(placements)
         + _batch_gap_penalty(placements)
         + _clustering_penalty(placements)

@@ -1,109 +1,129 @@
 """
-API route handlers for the timetable system.
+API routes — timetable generation and retrieval.
 
-Endpoints:
-  POST /generate-timetable        — run the solver and persist results
-  GET  /batch/{batch_id}/timetable
-  GET  /teacher/{teacher_id}/timetable
-  GET  /room/{room_id}/timetable
+New endpoints vs previous version
+───────────────────────────────────
+  POST /generate-timetable/{semester}
+      Runs the solver for a single semester (1–8) and persists results.
+      Returns a summary with penalty score and lecture count.
+
+  POST /generate-timetable/all
+      Convenience: runs the solver for every semester sequentially (1→8).
+      Returns a summary per semester.
+
+  GET  /timetable/{semester}
+      All entries for a semester, grouped by dept in the response.
+
+  GET  /timetable/{semester}/batch/{batch_id}
+  GET  /timetable/{semester}/room/{room_id}
+  GET  /timetable/{semester}/teacher/{teacher_id}
+  GET  /timetable/{semester}/department/{dept_code}
+      Filtered views.
 """
 
-import logging
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi            import APIRouter, Depends, HTTPException
+from sqlalchemy.orm     import Session
+from typing             import List
 
-from app.core.database import get_db
-from app.schemas.schemas import GenerateRequest, GenerateResponse, TimetableEntryResponse
+from app.core.database    import get_db
+from app.core.config      import settings
 from app.services.solver   import run_solver
 from app.services.optimizer import (
     persist_timetable,
+    get_entries_for_semester,
     get_entries_for_batch,
-    get_entries_for_teacher,
     get_entries_for_room,
+    get_entries_for_teacher,
+    get_entries_for_department,
 )
-from app.models.models import Batch, Teacher, Room
-from app.core.config import settings
-from typing import List
-
-logger = logging.getLogger(__name__)
+from app.schemas.schemas import TimetableEntryResponse, GenerateResponse
 
 router = APIRouter()
 
+TOTAL_SEMESTERS = settings.ACADEMIC_YEARS * settings.SEMESTERS_PER_YEAR
 
-@router.post("/generate-timetable", response_model=GenerateResponse)
-def generate_timetable(
-    request: GenerateRequest = GenerateRequest(),
-    db: Session = Depends(get_db),
-):
-    """
-    Run the full solver pipeline:
-      1. Load entities from the database.
-      2. Build a hard-constraint-valid initial timetable.
-      3. Optimise using local search.
-      4. Persist the best timetable found.
-      5. Return summary statistics.
-    """
-    # Allow per-request iteration override
-    if request.iterations is not None:
-        settings.SOLVER_ITERATIONS = request.iterations
 
-    try:
-        placements, penalty = run_solver(db)
-    except (ValueError, RuntimeError) as e:
-        raise HTTPException(status_code=422, detail=str(e))
+def _valid_semester(semester: int) -> None:
+    if semester < 1 or semester > TOTAL_SEMESTERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Semester must be between 1 and {TOTAL_SEMESTERS}."
+        )
 
-    entries = persist_timetable(db, placements)
 
+# ── Generation ────────────────────────────────────────────────────────────────
+
+@router.post("/generate-timetable/{semester}", response_model=GenerateResponse)
+def generate_semester(semester: int, db: Session = Depends(get_db)):
+    """Run the solver for a single semester and persist the result."""
+    _valid_semester(semester)
+    placements, penalty = run_solver(db, semester=semester)
+    entries = persist_timetable(db, placements, semester=semester)
     return GenerateResponse(
-        message       = "Timetable generated and saved successfully.",
-        total_entries = len(entries),
-        penalty_score = penalty,
+        semester       = semester,
+        penalty_score  = penalty,
+        lectures_count = len(entries),
+        message        = (
+            f"Semester {semester} scheduled: {len(entries)} lectures, "
+            f"penalty={penalty}."
+        ),
     )
 
 
-@router.get("/batch/{batch_id}/timetable", response_model=List[TimetableEntryResponse])
-def get_batch_timetable(batch_id: int, db: Session = Depends(get_db)):
-    """Return all scheduled lectures for a given batch, ordered by day and slot."""
-    batch = db.query(Batch).filter(Batch.id == batch_id).first()
-    if not batch:
-        raise HTTPException(status_code=404, detail=f"Batch {batch_id} not found.")
-
-    entries = get_entries_for_batch(db, batch_id)
-    if not entries:
-        raise HTTPException(
-            status_code=404,
-            detail="No timetable found for this batch. Run /generate-timetable first."
-        )
-    return entries
-
-
-@router.get("/teacher/{teacher_id}/timetable", response_model=List[TimetableEntryResponse])
-def get_teacher_timetable(teacher_id: int, db: Session = Depends(get_db)):
-    """Return all scheduled lectures for a given teacher."""
-    teacher = db.query(Teacher).filter(Teacher.id == teacher_id).first()
-    if not teacher:
-        raise HTTPException(status_code=404, detail=f"Teacher {teacher_id} not found.")
-
-    entries = get_entries_for_teacher(db, teacher_id)
-    if not entries:
-        raise HTTPException(
-            status_code=404,
-            detail="No timetable found for this teacher. Run /generate-timetable first."
-        )
-    return entries
+@router.post("/generate-timetable/all")
+def generate_all_semesters(db: Session = Depends(get_db)):
+    """Run the solver for all semesters sequentially."""
+    results = []
+    for sem in range(1, TOTAL_SEMESTERS + 1):
+        try:
+            placements, penalty = run_solver(db, semester=sem)
+            entries = persist_timetable(db, placements, semester=sem)
+            results.append({
+                "semester":       sem,
+                "penalty_score":  penalty,
+                "lectures_count": len(entries),
+                "status":         "ok",
+            })
+        except Exception as e:
+            results.append({
+                "semester": sem,
+                "status":   "error",
+                "detail":   str(e),
+            })
+    return {"results": results}
 
 
-@router.get("/room/{room_id}/timetable", response_model=List[TimetableEntryResponse])
-def get_room_timetable(room_id: int, db: Session = Depends(get_db)):
-    """Return all scheduled lectures for a given room."""
-    room = db.query(Room).filter(Room.id == room_id).first()
-    if not room:
-        raise HTTPException(status_code=404, detail=f"Room {room_id} not found.")
+# ── Retrieval ─────────────────────────────────────────────────────────────────
 
-    entries = get_entries_for_room(db, room_id)
-    if not entries:
-        raise HTTPException(
-            status_code=404,
-            detail="No timetable found for this room. Run /generate-timetable first."
-        )
-    return entries
+@router.get("/timetable/{semester}", response_model=List[TimetableEntryResponse])
+def get_semester_timetable(semester: int, db: Session = Depends(get_db)):
+    _valid_semester(semester)
+    return get_entries_for_semester(db, semester)
+
+
+@router.get("/timetable/{semester}/batch/{batch_id}",
+            response_model=List[TimetableEntryResponse])
+def get_batch_timetable(semester: int, batch_id: int, db: Session = Depends(get_db)):
+    _valid_semester(semester)
+    return get_entries_for_batch(db, batch_id, semester)
+
+
+@router.get("/timetable/{semester}/room/{room_id}",
+            response_model=List[TimetableEntryResponse])
+def get_room_timetable(semester: int, room_id: int, db: Session = Depends(get_db)):
+    _valid_semester(semester)
+    return get_entries_for_room(db, room_id, semester)
+
+
+@router.get("/timetable/{semester}/teacher/{teacher_id}",
+            response_model=List[TimetableEntryResponse])
+def get_teacher_timetable(semester: int, teacher_id: int, db: Session = Depends(get_db)):
+    _valid_semester(semester)
+    return get_entries_for_teacher(db, teacher_id, semester)
+
+
+@router.get("/timetable/{semester}/department/{dept_code}",
+            response_model=List[TimetableEntryResponse])
+def get_department_timetable(semester: int, dept_code: str, db: Session = Depends(get_db)):
+    _valid_semester(semester)
+    return get_entries_for_department(db, dept_code.upper(), semester)
