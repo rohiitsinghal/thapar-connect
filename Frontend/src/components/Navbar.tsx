@@ -35,34 +35,54 @@ const Navbar = () => {
         </Link>
 
         {/* Desktop nav */}
-        <div className="hidden md:flex items-center gap-1">
-          {navItems.map((item) => (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                location.pathname === item.path
-                  ? "bg-primary text-primary-foreground"
-                  : isLanding
-                  ? "text-primary-foreground/80 hover:text-primary-foreground hover:bg-primary-foreground/10"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
-            >
-              <item.icon className="w-4 h-4" />
-              {item.label}
-            </Link>
-          ))}
+        <div className="hidden md:flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            {navItems.map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                  location.pathname === item.path
+                    ? "bg-primary text-primary-foreground"
+                    : isLanding
+                    ? "text-primary-foreground/80 hover:text-primary-foreground hover:bg-primary-foreground/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+              >
+                <item.icon className="w-4 h-4" />
+                {item.label}
+              </Link>
+            ))}
+          </div>
+
+          <Button
+            asChild
+            size="sm"
+            className={isLanding ? "bg-primary-foreground text-primary hover:bg-primary-foreground/90" : ""}
+          >
+            <Link to="/login">Login</Link>
+          </Button>
         </div>
 
-        {/* Mobile menu button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className={`md:hidden ${isLanding ? "text-primary-foreground" : ""}`}
-          onClick={() => setMobileOpen(!mobileOpen)}
-        >
-          {mobileOpen ? <X /> : <Menu />}
-        </Button>
+        <div className="flex items-center gap-2 md:hidden">
+          <Button
+            asChild
+            size="sm"
+            className={isLanding ? "bg-primary-foreground text-primary hover:bg-primary-foreground/90" : ""}
+          >
+            <Link to="/login">Login</Link>
+          </Button>
+
+          {/* Mobile menu button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className={isLanding ? "text-primary-foreground" : ""}
+            onClick={() => setMobileOpen(!mobileOpen)}
+          >
+            {mobileOpen ? <X /> : <Menu />}
+          </Button>
+        </div>
       </div>
 
       {/* Mobile menu */}
@@ -84,6 +104,14 @@ const Navbar = () => {
                 {item.label}
               </Link>
             ))}
+
+            <Link
+              to="/login"
+              onClick={() => setMobileOpen(false)}
+              className="flex items-center justify-center px-3 py-2.5 mt-2 rounded-md text-sm font-medium bg-primary text-primary-foreground"
+            >
+              Login
+            </Link>
           </div>
         </div>
       )}

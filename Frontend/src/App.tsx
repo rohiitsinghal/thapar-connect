@@ -11,6 +11,7 @@ import Courses from "./pages/Courses";
 import Rooms from "./pages/Rooms";
 import Exams from "./pages/Exams";
 import Sections from "./pages/Sections";
+import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,6 +31,7 @@ const App = () => (
           <Route path="/rooms" element={<Rooms />} />
           <Route path="/exams" element={<Exams />} />
           <Route path="/sections" element={<Sections />} />
+          <Route path="/login" element={<Login />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
