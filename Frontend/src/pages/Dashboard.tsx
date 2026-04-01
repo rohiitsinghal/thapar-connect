@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import { Calendar, BookOpen, DoorOpen, Users, Clock, AlertTriangle, CheckCircle2, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import Footer from "@/components/Footer";
+import { getUserSession } from "@/lib/auth";
 
 const statCards = [
   { icon: BookOpen, label: "Total Courses", value: "352", change: "+12 this semester", color: "text-primary" },
@@ -25,6 +27,10 @@ const conflicts = [
 ];
 
 const Dashboard = () => {
+  const session = useMemo(() => getUserSession(), []);
+  const isStudent = session?.role === "student";
+  const visibleStats = isStudent ? [statCards[0]] : statCards;
+
   return (
     <div className="min-h-screen pt-20 pb-0">
       <div className="container mx-auto px-4 pb-16">
@@ -34,8 +40,8 @@ const Dashboard = () => {
         </div>
 
         {/* Stat Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {statCards.map((stat) => (
+        <div className={`grid grid-cols-1 ${isStudent ? "max-w-sm" : "sm:grid-cols-2 lg:grid-cols-4"} gap-4 mb-8`}>
+          {visibleStats.map((stat) => (
             <Card key={stat.label} className="shadow-card hover:shadow-elevated transition-shadow">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
@@ -55,9 +61,9 @@ const Dashboard = () => {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className={`grid grid-cols-1 ${isStudent ? "" : "lg:grid-cols-3"} gap-6`}>
           {/* Recent Schedules */}
-          <div className="lg:col-span-2">
+          <div className={isStudent ? "" : "lg:col-span-2"}>
             <Card className="shadow-card">
               <CardHeader>
                 <CardTitle className="font-display text-lg">Recent Schedules</CardTitle>
@@ -105,52 +111,53 @@ const Dashboard = () => {
             </Card>
           </div>
 
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Conflicts */}
-            <Card className="shadow-card">
-              <CardHeader>
-                <CardTitle className="font-display text-lg flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-accent" /> Conflicts
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {conflicts.map((c, i) => (
-                  <div key={i} className="p-3 rounded-lg bg-secondary text-sm">
-                    <p className="text-foreground">{c.issue}</p>
-                    <span className={`text-xs font-medium mt-1 inline-block ${
-                      c.severity === "High" ? "text-destructive" : c.severity === "Medium" ? "text-accent" : "text-muted-foreground"
-                    }`}>
-                      {c.severity} Priority
-                    </span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            {/* Utilization */}
-            <Card className="shadow-card">
-              <CardHeader>
-                <CardTitle className="font-display text-lg">Room Utilization</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {[
-                  { building: "LT Block", pct: 94 },
-                  { building: "A Block", pct: 87 },
-                  { building: "D Block", pct: 72 },
-                  { building: "C Block", pct: 65 },
-                ].map((b) => (
-                  <div key={b.building}>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-foreground font-medium">{b.building}</span>
-                      <span className="text-muted-foreground">{b.pct}%</span>
+          {!isStudent && (
+            <div className="space-y-6">
+              {/* Conflicts */}
+              <Card className="shadow-card">
+                <CardHeader>
+                  <CardTitle className="font-display text-lg flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-accent" /> Conflicts
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {conflicts.map((c, i) => (
+                    <div key={i} className="p-3 rounded-lg bg-secondary text-sm">
+                      <p className="text-foreground">{c.issue}</p>
+                      <span className={`text-xs font-medium mt-1 inline-block ${
+                        c.severity === "High" ? "text-destructive" : c.severity === "Medium" ? "text-accent" : "text-muted-foreground"
+                      }`}>
+                        {c.severity} Priority
+                      </span>
                     </div>
-                    <Progress value={b.pct} className="h-2" />
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              {/* Utilization */}
+              <Card className="shadow-card">
+                <CardHeader>
+                  <CardTitle className="font-display text-lg">Room Utilization</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {[
+                    { building: "LT Block", pct: 94 },
+                    { building: "A Block", pct: 87 },
+                    { building: "D Block", pct: 72 },
+                    { building: "C Block", pct: 65 },
+                  ].map((b) => (
+                    <div key={b.building}>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-foreground font-medium">{b.building}</span>
+                        <span className="text-muted-foreground">{b.pct}%</span>
+                      </div>
+                      <Progress value={b.pct} className="h-2" />
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
       </div>
       <Footer />
