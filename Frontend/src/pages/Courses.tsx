@@ -29,6 +29,11 @@ const Courses = () => {
       c.dept.toLowerCase().includes(search.toLowerCase())
   );
 
+  const openStudyMaterial = (courseCode: string) => {
+    const url = `/courses/material?code=${encodeURIComponent(courseCode)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <div className="min-h-screen pt-20 pb-0">
       <div className="container mx-auto px-4 pb-16">
@@ -50,7 +55,11 @@ const Courses = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((course) => (
-            <Card key={course.code} className="shadow-card hover:shadow-elevated transition-shadow cursor-pointer group">
+            <Card
+              key={course.code}
+              className="shadow-card hover:shadow-elevated transition-shadow cursor-pointer group"
+              onClick={() => openStudyMaterial(course.code)}
+            >
               <CardContent className="p-5">
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary transition-colors">
@@ -68,6 +77,7 @@ const Courses = () => {
                   <span>{course.students} Students</span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">{course.instructor}</p>
+                <p className="text-xs text-primary mt-3 font-medium">Open Study Material</p>
               </CardContent>
             </Card>
           ))}

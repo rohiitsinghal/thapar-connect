@@ -19,12 +19,21 @@ const navItems = [
   { label: "Student Sections", path: "/sections", icon: Users },
 ];
 
+const studentVisiblePaths = new Set(["/dashboard", "/timetable", "/courses", "/exams"]);
+
 const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isLanding = ["/", "/login", "/welcome"].includes(location.pathname);
   const session = useMemo(() => getUserSession(), [location.pathname]);
+  const visibleNavItems = useMemo(() => {
+    if (session?.role !== "student") {
+      return navItems;
+    }
+
+    return navItems.filter((item) => studentVisiblePaths.has(item.path));
+  }, [session]);
 
   const handleLogout = () => {
     clearUserSession();
@@ -52,7 +61,7 @@ const Navbar = () => {
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-3">
           <div className="flex items-center gap-1">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <Link
                 key={item.path}
                 to={item.path}
@@ -132,7 +141,7 @@ const Navbar = () => {
       {mobileOpen && (
         <div className="md:hidden bg-card border-b border-border shadow-elevated">
           <div className="px-4 py-3 space-y-1">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <Link
                 key={item.path}
                 to={item.path}

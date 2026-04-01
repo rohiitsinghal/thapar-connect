@@ -9,6 +9,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Timetable from "./pages/Timetable";
 import Courses from "./pages/Courses";
+import CourseMaterial from "./pages/CourseMaterial";
 import Rooms from "./pages/Rooms";
 import Exams from "./pages/Exams";
 import Sections from "./pages/Sections";
@@ -30,6 +31,7 @@ const AppContent = () => {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/timetable" element={<Timetable />} />
         <Route path="/courses" element={<Courses />} />
+        <Route path="/courses/material" element={<CourseMaterial />} />
         <Route path="/rooms" element={<Rooms />} />
         <Route path="/exams" element={<Exams />} />
         <Route path="/sections" element={<Sections />} />
