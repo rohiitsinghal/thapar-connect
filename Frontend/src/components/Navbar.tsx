@@ -1,7 +1,14 @@
-import { Link, useLocation } from "react-router-dom";
-import { Calendar, LayoutDashboard, BookOpen, DoorOpen, Clock, Users, Menu, X } from "lucide-react";
-import { useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Calendar, LayoutDashboard, BookOpen, DoorOpen, Clock, Users, Menu, X, ChevronDown } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { clearUserSession, getUserSession } from "@/lib/auth";
 
 const navItems = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
@@ -14,13 +21,21 @@ const navItems = [
 
 const Navbar = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const isLanding = location.pathname === "/";
+  const isLanding = ["/", "/login", "/welcome"].includes(location.pathname);
+  const session = useMemo(() => getUserSession(), [location.pathname]);
+
+  const handleLogout = () => {
+    clearUserSession();
+    setMobileOpen(false);
+    navigate("/login");
+  };
 
   return (
     <nav className={`fixed top-0 left-0 right-0 z-50 transition-all ${isLanding ? "bg-transparent" : "bg-card/95 backdrop-blur-md border-b border-border shadow-card"}`}>
       <div className="container mx-auto flex items-center justify-between h-16 px-4">
-        <Link to="/" className="flex items-center gap-2">
+        <div className="flex items-center gap-2 select-none" aria-label="ThaparTime brand">
           <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center">
             <Calendar className="w-5 h-5 text-primary-foreground" />
           </div>
@@ -32,7 +47,7 @@ const Navbar = () => {
               Thapar University
             </span>
           </div>
-        </Link>
+        </div>
 
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-3">
@@ -55,23 +70,51 @@ const Navbar = () => {
             ))}
           </div>
 
-          <Button
-            asChild
-            size="sm"
-            className={isLanding ? "bg-primary-foreground text-primary hover:bg-primary-foreground/90" : ""}
-          >
-            <Link to="/login">Login</Link>
-          </Button>
+          {session ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="gap-1.5">
+                  {session.displayName}
+                  <ChevronDown className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleLogout}>Log out</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button
+              asChild
+              size="sm"
+              className={isLanding ? "bg-primary-foreground text-primary hover:bg-primary-foreground/90" : ""}
+            >
+              <Link to="/">Login</Link>
+            </Button>
+          )}
         </div>
 
         <div className="flex items-center gap-2 md:hidden">
-          <Button
-            asChild
-            size="sm"
-            className={isLanding ? "bg-primary-foreground text-primary hover:bg-primary-foreground/90" : ""}
-          >
-            <Link to="/login">Login</Link>
-          </Button>
+          {session ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="gap-1.5">
+                  {session.displayName}
+                  <ChevronDown className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleLogout}>Log out</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button
+              asChild
+              size="sm"
+              className={isLanding ? "bg-primary-foreground text-primary hover:bg-primary-foreground/90" : ""}
+            >
+              <Link to="/">Login</Link>
+            </Button>
+          )}
 
           {/* Mobile menu button */}
           <Button
@@ -105,13 +148,23 @@ const Navbar = () => {
               </Link>
             ))}
 
-            <Link
-              to="/login"
-              onClick={() => setMobileOpen(false)}
-              className="flex items-center justify-center px-3 py-2.5 mt-2 rounded-md text-sm font-medium bg-primary text-primary-foreground"
-            >
-              Login
-            </Link>
+            {session ? (
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-full flex items-center justify-center px-3 py-2.5 mt-2 rounded-md text-sm font-medium bg-primary text-primary-foreground"
+              >
+                Log out
+              </button>
+            ) : (
+              <Link
+                to="/"
+                onClick={() => setMobileOpen(false)}
+                className="flex items-center justify-center px-3 py-2.5 mt-2 rounded-md text-sm font-medium bg-primary text-primary-foreground"
+              >
+                Login
+              </Link>
+            )}
           </div>
         </div>
       )}
