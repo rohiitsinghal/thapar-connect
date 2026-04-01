@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, BookOpen } from "lucide-react";
 import Footer from "@/components/Footer";
+import { getUserSession } from "@/lib/auth";
+import { getInstructorProfile } from "@/lib/instructorData";
 
 const coursesData = [
   { code: "UCS301", name: "Data Structures", dept: "CSED", credits: 4, instructor: "Dr. A. Gupta", students: 180, type: "Core" },
@@ -22,15 +24,30 @@ const coursesData = [
 
 const Courses = () => {
   const [search, setSearch] = useState("");
-  const filtered = coursesData.filter(
-    (c) =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.code.toLowerCase().includes(search.toLowerCase()) ||
-      c.dept.toLowerCase().includes(search.toLowerCase())
+  const session = useMemo(() => getUserSession(), []);
+  const isInstructor = session?.role === "instructor";
+
+  const visibleCourses = useMemo(() => {
+    if (!isInstructor || !session) {
+      return coursesData;
+    }
+
+    const profile = getInstructorProfile(session.identifier);
+    const taughtCodes = new Set(profile.assignments.map((assignment) => assignment.courseCode));
+    return coursesData.filter((course) => taughtCodes.has(course.code));
+  }, [isInstructor, session]);
+
+  const filtered = visibleCourses.filter(
+    (course) =>
+      course.name.toLowerCase().includes(search.toLowerCase()) ||
+      course.code.toLowerCase().includes(search.toLowerCase()) ||
+      course.dept.toLowerCase().includes(search.toLowerCase())
   );
 
   const openStudyMaterial = (courseCode: string) => {
-    const url = `/courses/material?code=${encodeURIComponent(courseCode)}`;
+    const url = isInstructor
+      ? `/courses/manage-material?code=${encodeURIComponent(courseCode)}`
+      : `/courses/material?code=${encodeURIComponent(courseCode)}`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -40,7 +57,9 @@ const Courses = () => {
         <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">Course Catalog</h1>
-            <p className="text-muted-foreground mt-1">{coursesData.length} courses across all departments</p>
+            <p className="text-muted-foreground mt-1">
+              {visibleCourses.length} {isInstructor ? "courses assigned to you" : "courses across all departments"}
+            </p>
           </div>
           <div className="relative w-full md:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -77,7 +96,9 @@ const Courses = () => {
                   <span>{course.students} Students</span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">{course.instructor}</p>
-                <p className="text-xs text-primary mt-3 font-medium">Open Study Material</p>
+                <p className="text-xs text-primary mt-3 font-medium">
+                  {isInstructor ? "Upload Study Material" : "Open Study Material"}
+                </p>
               </CardContent>
             </Card>
           ))}

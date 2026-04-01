@@ -10,9 +10,11 @@ import Dashboard from "./pages/Dashboard";
 import Timetable from "./pages/Timetable";
 import Courses from "./pages/Courses";
 import CourseMaterial from "./pages/CourseMaterial";
+import CourseMaterialManage from "./pages/CourseMaterialManage";
 import Rooms from "./pages/Rooms";
 import Exams from "./pages/Exams";
 import Sections from "./pages/Sections";
+import SectionStudents from "./pages/SectionStudents";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,9 +34,11 @@ const AppContent = () => {
         <Route path="/timetable" element={<Timetable />} />
         <Route path="/courses" element={<Courses />} />
         <Route path="/courses/material" element={<CourseMaterial />} />
+        <Route path="/courses/manage-material" element={<CourseMaterialManage />} />
         <Route path="/rooms" element={<Rooms />} />
         <Route path="/exams" element={<Exams />} />
         <Route path="/sections" element={<Sections />} />
+        <Route path="/sections/students" element={<SectionStudents />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>

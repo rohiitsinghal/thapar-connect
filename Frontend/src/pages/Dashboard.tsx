@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import Footer from "@/components/Footer";
 import { getUserSession } from "@/lib/auth";
+import { getInstructorProfile } from "@/lib/instructorData";
 
 const statCards = [
   { icon: BookOpen, label: "Total Courses", value: "352", change: "+12 this semester", color: "text-primary" },
@@ -29,14 +30,88 @@ const conflicts = [
 const Dashboard = () => {
   const session = useMemo(() => getUserSession(), []);
   const isStudent = session?.role === "student";
-  const visibleStats = isStudent ? [statCards[0]] : statCards;
+  const isInstructor = session?.role === "instructor";
+
+  const instructorProfile = useMemo(() => {
+    if (!isInstructor || !session) {
+      return null;
+    }
+
+    return getInstructorProfile(session.identifier);
+  }, [isInstructor, session]);
+
+  const instructorStats = useMemo(() => {
+    if (!instructorProfile) {
+      return [] as typeof statCards;
+    }
+
+    const uniqueCourses = new Set(instructorProfile.assignments.map((assignment) => assignment.courseCode));
+    const totalStudents = instructorProfile.assignments.reduce(
+      (accumulator, assignment) => accumulator + assignment.students.length,
+      0
+    );
+
+    return [
+      {
+        icon: BookOpen,
+        label: "Courses You Teach",
+        value: `${uniqueCourses.size}`,
+        change: "Assigned this semester",
+        color: "text-primary",
+      },
+      {
+        icon: Users,
+        label: "Your Sections",
+        value: `${instructorProfile.assignments.length}`,
+        change: "Currently active",
+        color: "text-accent",
+      },
+      {
+        icon: Users,
+        label: "Students in Sections",
+        value: `${totalStudents}`,
+        change: "Across your classes",
+        color: "text-crimson-light",
+      },
+      {
+        icon: Clock,
+        label: "Exam Schedules",
+        value: `${uniqueCourses.size}`,
+        change: "For your courses",
+        color: "text-gold",
+      },
+    ];
+  }, [instructorProfile]);
+
+  const instructorRecentSchedules = useMemo(() => {
+    if (!instructorProfile) {
+      return recentSchedules;
+    }
+
+    return instructorProfile.assignments.map((assignment) => ({
+      course: `${assignment.courseCode} - ${assignment.courseName} (${assignment.sectionName})`,
+      time: assignment.time,
+      room: "Assigned Classroom",
+      dept: assignment.courseCode.slice(0, 3),
+      status: "Confirmed",
+    }));
+  }, [instructorProfile]);
+
+  const visibleStats = isStudent ? [statCards[0]] : isInstructor ? instructorStats : statCards;
+  const visibleSchedules = isInstructor ? instructorRecentSchedules : recentSchedules;
+  const showSidebar = !isStudent && !isInstructor;
+  const subtitle = isInstructor
+    ? `Instructor Overview — ${session?.displayName}`
+    : isStudent
+    ? `Student Overview — ${session?.displayName}`
+    : "Academic Scheduling Overview — Spring 2026";
 
   return (
     <div className="min-h-screen pt-20 pb-0">
       <div className="container mx-auto px-4 pb-16">
         <div className="mb-8">
           <h1 className="font-display text-3xl font-bold text-foreground">Dashboard</h1>
-          <p className="text-muted-foreground mt-1">Academic Scheduling Overview — Spring 2026</p>
+          <p className="text-muted-foreground mt-1">{subtitle}</p>
         </div>
 
         {/* Stat Cards */}
@@ -61,9 +136,9 @@ const Dashboard = () => {
           ))}
         </div>
 
-        <div className={`grid grid-cols-1 ${isStudent ? "" : "lg:grid-cols-3"} gap-6`}>
+        <div className={`grid grid-cols-1 ${showSidebar ? "lg:grid-cols-3" : ""} gap-6`}>
           {/* Recent Schedules */}
-          <div className={isStudent ? "" : "lg:col-span-2"}>
+          <div className={showSidebar ? "lg:col-span-2" : ""}>
             <Card className="shadow-card">
               <CardHeader>
                 <CardTitle className="font-display text-lg">Recent Schedules</CardTitle>
@@ -81,7 +156,7 @@ const Dashboard = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {recentSchedules.map((s, i) => (
+                      {visibleSchedules.map((s, i) => (
                         <tr key={i} className="border-b border-border last:border-0">
                           <td className="py-3 font-medium text-foreground">{s.course}</td>
                           <td className="py-3 text-muted-foreground">{s.time}</td>
@@ -111,7 +186,7 @@ const Dashboard = () => {
             </Card>
           </div>
 
-          {!isStudent && (
+          {showSidebar && (
             <div className="space-y-6">
               {/* Conflicts */}
               <Card className="shadow-card">

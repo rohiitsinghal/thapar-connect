@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import heroCampus from "@/assets/thapar.jpg";
 import { setUserSession } from "@/lib/auth";
+import { findInstructorProfile, findStudentByRollNo } from "@/lib/instructorData";
 
 const roleOptions = [
   { value: "admin", label: "Admin" },
@@ -86,9 +87,9 @@ const Login = () => {
     const trimmedIdentifier = identifier.trim();
     const displayName =
       role === "student"
-        ? "Student"
+        ? findStudentByRollNo(trimmedIdentifier)?.name || `Student ${trimmedIdentifier}`
         : role === "instructor"
-        ? "Instructor"
+        ? findInstructorProfile(trimmedIdentifier)?.name || `Instructor ${trimmedIdentifier}`
         : "Admin";
 
     setUserSession({

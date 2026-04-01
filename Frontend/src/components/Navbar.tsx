@@ -20,6 +20,7 @@ const navItems = [
 ];
 
 const studentVisiblePaths = new Set(["/dashboard", "/timetable", "/courses", "/exams"]);
+const instructorVisiblePaths = new Set(["/dashboard", "/timetable", "/courses", "/exams", "/sections"]);
 
 const Navbar = () => {
   const location = useLocation();
@@ -28,11 +29,15 @@ const Navbar = () => {
   const isLanding = ["/", "/login", "/welcome"].includes(location.pathname);
   const session = useMemo(() => getUserSession(), [location.pathname]);
   const visibleNavItems = useMemo(() => {
-    if (session?.role !== "student") {
-      return navItems;
+    if (session?.role === "student") {
+      return navItems.filter((item) => studentVisiblePaths.has(item.path));
     }
 
-    return navItems.filter((item) => studentVisiblePaths.has(item.path));
+    if (session?.role === "instructor") {
+      return navItems.filter((item) => instructorVisiblePaths.has(item.path));
+    }
+
+    return navItems;
   }, [session]);
 
   const handleLogout = () => {
