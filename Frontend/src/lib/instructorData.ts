@@ -19,8 +19,8 @@ export type InstructorProfile = {
 
 export const instructorProfiles: InstructorProfile[] = [
   {
-    employeeId: "EMP001",
-    name: "Dr. A. Gupta",
+    employeeId: "TIET151",
+    name: "Dr. Ajay Gupta",
     assignments: [
       {
         courseCode: "UCS301",
@@ -28,6 +28,7 @@ export const instructorProfiles: InstructorProfile[] = [
         sectionName: "Section A",
         time: "Mon/Wed 9:00-10:30",
         students: [
+          { name: "Rohit Singhal", rollNo: "1024170213" },
           { name: "Aarav Malhotra", rollNo: "102201001" },
           { name: "Priya Sharma", rollNo: "102201002" },
           { name: "Rohan Arora", rollNo: "102201003" },
@@ -60,6 +61,7 @@ export const instructorProfiles: InstructorProfile[] = [
         sectionName: "Section A",
         time: "Tue/Thu 10:00-11:30",
         students: [
+          { name: "Rohit Singhal", rollNo: "1024170213" },
           { name: "Ananya Verma", rollNo: "102201041" },
           { name: "Ishaan Sethi", rollNo: "102201042" },
           { name: "Maya Nair", rollNo: "102201043" },
@@ -92,11 +94,48 @@ export const instructorProfiles: InstructorProfile[] = [
         sectionName: "Section B",
         time: "Mon/Thu 11:00-12:30",
         students: [
+          { name: "Rohit Singhal", rollNo: "1024170213" },
           { name: "Devansh Raj", rollNo: "102201071" },
           { name: "Ira Chawla", rollNo: "102201072" },
           { name: "Kabir Gill", rollNo: "102201073" },
           { name: "Mehak Khanna", rollNo: "102201074" },
           { name: "Parth Oberoi", rollNo: "102201075" },
+        ],
+      },
+    ],
+  },
+  {
+    employeeId: "EMP004",
+    name: "Dr. S. Verma",
+    assignments: [
+      {
+        courseCode: "UMA041",
+        courseName: "Calculus",
+        sectionName: "Section A",
+        time: "Tue/Fri 8:00-9:30",
+        students: [
+          { name: "Rohit Singhal", rollNo: "1024170213" },
+          { name: "Aarav Malhotra", rollNo: "102201001" },
+          { name: "Priya Sharma", rollNo: "102201002" },
+          { name: "Ananya Verma", rollNo: "102201041" },
+        ],
+      },
+    ],
+  },
+  {
+    employeeId: "EMP005",
+    name: "Dr. M. Arora",
+    assignments: [
+      {
+        courseCode: "UMA207",
+        courseName: "Probability and Statistics",
+        sectionName: "Section A",
+        time: "Wed/Fri 14:00-15:30",
+        students: [
+          { name: "Rohit Singhal", rollNo: "1024170213" },
+          { name: "Kunal Mehta", rollNo: "102201005" },
+          { name: "Maya Nair", rollNo: "102201043" },
+          { name: "Harsh Bedi", rollNo: "102201044" },
         ],
       },
     ],
@@ -132,3 +171,26 @@ export const findStudentByRollNo = (rollNo: string): SectionStudent | null => {
 
 export const getAllAssignments = (): SectionAssignment[] =>
   instructorProfiles.flatMap((profile) => profile.assignments);
+
+export const getAssignmentsForStudent = (rollNo: string): SectionAssignment[] => {
+  const normalizedRollNo = rollNo.trim().toUpperCase();
+  if (!normalizedRollNo) {
+    return [];
+  }
+
+  const matches: SectionAssignment[] = [];
+
+  for (const profile of instructorProfiles) {
+    for (const assignment of profile.assignments) {
+      const isEnrolled = assignment.students.some(
+        (student) => student.rollNo.toUpperCase() === normalizedRollNo
+      );
+
+      if (isEnrolled) {
+        matches.push(assignment);
+      }
+    }
+  }
+
+  return matches;
+};

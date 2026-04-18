@@ -2,16 +2,18 @@ import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Search, BookOpen } from "lucide-react";
 import Footer from "@/components/Footer";
 import { getUserSession } from "@/lib/auth";
-import { getInstructorProfile } from "@/lib/instructorData";
+import { getAssignmentsForStudent, getInstructorProfile } from "@/lib/instructorData";
 
 const coursesData = [
   { code: "UCS301", name: "Data Structures", dept: "CSED", credits: 4, instructor: "Dr. A. Gupta", students: 180, type: "Core" },
   { code: "UCS503", name: "Operating Systems", dept: "CSED", credits: 4, instructor: "Dr. P. Kaur", students: 165, type: "Core" },
   { code: "UCS310", name: "Database Management Systems", dept: "CSED", credits: 4, instructor: "Dr. R. Singh", students: 175, type: "Core" },
-  { code: "UMA031", name: "Linear Algebra", dept: "SOM", credits: 3, instructor: "Dr. S. Verma", students: 320, type: "Core" },
+  { code: "UMA041", name: "Calculus", dept: "SOM", credits: 3, instructor: "Dr. S. Verma", students: 320, type: "Core" },
+  { code: "UMA207", name: "Probability and Statistics", dept: "SOM", credits: 3, instructor: "Dr. M. Arora", students: 290, type: "Core" },
   { code: "UCS601", name: "Artificial Intelligence", dept: "CSED", credits: 3, instructor: "Dr. M. Sharma", students: 140, type: "Elective" },
   { code: "UEE501", name: "Power Systems", dept: "EIED", credits: 4, instructor: "Dr. K. Mehta", students: 95, type: "Core" },
   { code: "UME401", name: "Thermodynamics", dept: "MED", credits: 3, instructor: "Dr. N. Rao", students: 110, type: "Core" },
@@ -26,16 +28,28 @@ const Courses = () => {
   const [search, setSearch] = useState("");
   const session = useMemo(() => getUserSession(), []);
   const isInstructor = session?.role === "instructor";
+  const isStudent = session?.role === "student";
 
   const visibleCourses = useMemo(() => {
-    if (!isInstructor || !session) {
+    if (!session) {
       return coursesData;
     }
 
-    const profile = getInstructorProfile(session.identifier);
-    const taughtCodes = new Set(profile.assignments.map((assignment) => assignment.courseCode));
-    return coursesData.filter((course) => taughtCodes.has(course.code));
-  }, [isInstructor, session]);
+    if (isInstructor) {
+      const profile = getInstructorProfile(session.identifier);
+      const taughtCodes = new Set(profile.assignments.map((assignment) => assignment.courseCode));
+      return coursesData.filter((course) => taughtCodes.has(course.code));
+    }
+
+    if (isStudent) {
+      const enrolledCodes = new Set(
+        getAssignmentsForStudent(session.identifier).map((assignment) => assignment.courseCode)
+      );
+      return coursesData.filter((course) => enrolledCodes.has(course.code));
+    }
+
+    return coursesData;
+  }, [isInstructor, isStudent, session]);
 
   const filtered = visibleCourses.filter(
     (course) =>
@@ -58,7 +72,7 @@ const Courses = () => {
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">Course Catalog</h1>
             <p className="text-muted-foreground mt-1">
-              {visibleCourses.length} {isInstructor ? "courses assigned to you" : "courses across all departments"}
+              {visibleCourses.length} {isInstructor ? "courses assigned to you" : isStudent ? "courses in your current semester" : "courses across all departments"}
             </p>
           </div>
           <div className="relative w-full md:w-72">
@@ -76,8 +90,8 @@ const Courses = () => {
           {filtered.map((course) => (
             <Card
               key={course.code}
-              className="shadow-card hover:shadow-elevated transition-shadow cursor-pointer group"
-              onClick={() => openStudyMaterial(course.code)}
+              className={`shadow-card hover:shadow-elevated transition-shadow group ${isInstructor ? "cursor-pointer" : ""}`}
+              onClick={isInstructor ? () => openStudyMaterial(course.code) : undefined}
             >
               <CardContent className="p-5">
                 <div className="flex items-start justify-between mb-3">
@@ -96,9 +110,15 @@ const Courses = () => {
                   <span>{course.students} Students</span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">{course.instructor}</p>
-                <p className="text-xs text-primary mt-3 font-medium">
-                  {isInstructor ? "Upload Study Material" : "Open Study Material"}
-                </p>
+                {isInstructor ? (
+                  <p className="text-xs text-primary mt-3 font-medium">Upload Study Material</p>
+                ) : (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => openStudyMaterial(course.code)}>
+                      Open Study Material
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}

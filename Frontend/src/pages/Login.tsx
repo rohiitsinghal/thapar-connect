@@ -42,10 +42,22 @@ const roleFieldConfig = {
   },
 } as const;
 
+const demoCredentials = {
+  student: {
+    identifier: "1024170213",
+    password: "123456789",
+  },
+  instructor: {
+    identifier: "TIET151",
+    password: "123456789",
+  },
+} as const;
+
 const Login = () => {
   const [role, setRole] = useState<string>("");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
   const navigate = useNavigate();
 
   const selectedRole = role as keyof typeof roleFieldConfig;
@@ -71,6 +83,7 @@ const Login = () => {
     setRole(value);
     setIdentifier("");
     setPassword("");
+    setLoginError("");
   };
 
   const isFormValid =
@@ -85,6 +98,27 @@ const Login = () => {
     }
 
     const trimmedIdentifier = identifier.trim();
+    const trimmedPassword = password.trim();
+
+    if (
+      role === "student" &&
+      (trimmedIdentifier.toUpperCase() !== demoCredentials.student.identifier ||
+        trimmedPassword !== demoCredentials.student.password)
+    ) {
+      setLoginError("Use demo student credentials: Roll No 1024170213 and password 123456789.");
+      return;
+    }
+
+    if (
+      role === "instructor" &&
+      (trimmedIdentifier.toUpperCase() !== demoCredentials.instructor.identifier ||
+        trimmedPassword !== demoCredentials.instructor.password)
+    ) {
+      setLoginError("Use demo instructor credentials: Employee ID TIET151 and password 123456789.");
+      return;
+    }
+
+    setLoginError("");
     const displayName =
       role === "student"
         ? findStudentByRollNo(trimmedIdentifier)?.name || `Student ${trimmedIdentifier}`
@@ -130,6 +164,12 @@ const Login = () => {
                 </SelectContent>
               </Select>
               <p className="text-sm text-muted-foreground">{helperText}</p>
+              {role === "student" ? (
+                <p className="text-xs text-muted-foreground">Demo: Roll No 1024170213, Password 123456789</p>
+              ) : null}
+              {role === "instructor" ? (
+                <p className="text-xs text-muted-foreground">Demo: Employee ID TIET151, Password 123456789</p>
+              ) : null}
             </div>
 
             {fieldConfig && (
@@ -163,6 +203,7 @@ const Login = () => {
             <Button className="w-full" disabled={!isFormValid} onClick={handleLogin}>
               Login as {role ? roleOptions.find((r) => r.value === role)?.label : "User"}
             </Button>
+            {loginError ? <p className="text-sm text-destructive">{loginError}</p> : null}
           </CardContent>
         </Card>
       </div>

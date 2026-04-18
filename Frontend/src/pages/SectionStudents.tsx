@@ -36,12 +36,14 @@ const SectionStudents = () => {
 
         <Card className="shadow-card">
           <CardHeader>
-            <CardTitle className="font-display text-2xl flex items-center gap-2">
-              <Users className="w-5 h-5 text-primary" />
-              {selected
-                ? `${selected.courseCode} - ${selected.courseName} (${selected.sectionName})`
-                : "Section Students"}
-            </CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="font-display text-2xl flex items-center gap-2">
+                <Users className="w-5 h-5 text-primary" />
+                {selected
+                  ? `${selected.courseCode} - ${selected.courseName} (${selected.sectionName})`
+                  : "Section Students"}
+              </CardTitle>
+            </div>
           </CardHeader>
 
           <CardContent>

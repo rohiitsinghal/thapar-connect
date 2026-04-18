@@ -2,8 +2,9 @@
 Pydantic schemas — request/response DTOs.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing   import Optional
+from datetime import date
 
 
 class TimetableEntryResponse(BaseModel):
@@ -33,3 +34,16 @@ class GenerateResponse(BaseModel):
     penalty_score:  int
     lectures_count: int
     message:        str
+
+
+class TimetablePublishSettingsResponse(BaseModel):
+    semester_weeks: int = Field(ge=1, le=52)
+    semester_start_date: date
+    semester_end_date: date
+    published_at: Optional[str] = ""
+
+
+class TimetablePublishSettingsUpdateRequest(BaseModel):
+    semester_weeks: int = Field(ge=1, le=52)
+    semester_start_date: date
+    semester_end_date: date

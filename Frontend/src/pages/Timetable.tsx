@@ -1,10 +1,28 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import Footer from "@/components/Footer";
+import { getUserSession } from "@/lib/auth";
+import { getInstructorProfile } from "@/lib/instructorData";
+import {
+  deriveSemesterWeeksFromDateRange,
+  fetchTimetablePublishSettings,
+  getTimetablePublishSettings,
+  publishTimetableSettings,
+} from "@/lib/timetablePublishSettings";
+import { Download } from "lucide-react";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const timeSlots = ["8:00", "9:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+const ICS_TIMEZONE = "Asia/Kolkata";
+const dayToIndex: Record<string, number> = {
+  Monday: 1,
+  Tuesday: 2,
+  Wednesday: 3,
+  Thursday: 4,
+  Friday: 5,
+};
 
 interface ScheduleEntry {
   course: string;
@@ -28,15 +46,241 @@ const sampleSchedule: Record<string, ScheduleEntry> = {
   "Friday-11:00": { course: "DBMS", code: "UCS310", room: "LT-102", instructor: "Dr. Singh", color: "bg-gold/15 text-gold border-gold/30", span: 2 },
 };
 
+const pad = (value: number): string => String(value).padStart(2, "0");
+
+const parseHourMinute = (time: string): { hour: number; minute: number } => {
+  const [hourText, minuteText] = time.split(":");
+  return {
+    hour: Number(hourText),
+    minute: Number(minuteText),
+  };
+};
+
+const toIcsDateTimeLocal = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hour = pad(date.getHours());
+  const minute = pad(date.getMinutes());
+  const second = pad(date.getSeconds());
+  return `${year}${month}${day}T${hour}${minute}${second}`;
+};
+
+const toIcsDateTimeUtc = (date: Date): string => {
+  const year = date.getUTCFullYear();
+  const month = pad(date.getUTCMonth() + 1);
+  const day = pad(date.getUTCDate());
+  const hour = pad(date.getUTCHours());
+  const minute = pad(date.getUTCMinutes());
+  const second = pad(date.getUTCSeconds());
+  return `${year}${month}${day}T${hour}${minute}${second}Z`;
+};
+
+const escapeIcsText = (value: string): string =>
+  value
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
+
+const parseDateInput = (value: string): Date | null => {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  const parsed = new Date(year, month - 1, day);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getFirstWeekdayOnOrAfter = (startDate: Date, weekday: number): Date => {
+  const candidate = new Date(startDate);
+  const daysUntilTarget = (weekday - candidate.getDay() + 7) % 7;
+  candidate.setDate(candidate.getDate() + daysUntilTarget);
+  return candidate;
+};
+
+const toIcsUntilUtc = (dateInput: string): string => {
+  const parsed = parseDateInput(dateInput);
+  if (!parsed) {
+    return toIcsDateTimeUtc(new Date());
+  }
+
+  const utc = new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 23, 59, 59));
+  return toIcsDateTimeUtc(utc);
+};
+
 const Timetable = () => {
-  const [semester, setSemester] = useState("spring-2026");
-  const [department, setDepartment] = useState("csed");
+  const session = getUserSession();
+  const initialPublishSettings = useMemo(() => getTimetablePublishSettings(), []);
+  const [semesterWeeksInput, setSemesterWeeksInput] = useState(String(initialPublishSettings.semesterWeeks));
+  const [semesterStartDateInput, setSemesterStartDateInput] = useState(initialPublishSettings.semesterStartDate);
+  const [semesterEndDateInput, setSemesterEndDateInput] = useState(initialPublishSettings.semesterEndDate);
+  const [activeSemesterWeeks, setActiveSemesterWeeks] = useState(initialPublishSettings.semesterWeeks);
+  const [activeSemesterStartDate, setActiveSemesterStartDate] = useState(initialPublishSettings.semesterStartDate);
+  const [activeSemesterEndDate, setActiveSemesterEndDate] = useState(initialPublishSettings.semesterEndDate);
+  const [lastPublishedAt, setLastPublishedAt] = useState(initialPublishSettings.publishedAt);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadPublishedSettings = async () => {
+      const settings = await fetchTimetablePublishSettings();
+      if (!isMounted) {
+        return;
+      }
+
+      setSemesterWeeksInput(String(settings.semesterWeeks));
+      setSemesterStartDateInput(settings.semesterStartDate);
+      setSemesterEndDateInput(settings.semesterEndDate);
+      setActiveSemesterWeeks(settings.semesterWeeks);
+      setActiveSemesterStartDate(settings.semesterStartDate);
+      setActiveSemesterEndDate(settings.semesterEndDate);
+      setLastPublishedAt(settings.publishedAt);
+    };
+
+    void loadPublishedSettings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const visibleSchedule = useMemo(() => {
+    if (session?.role !== "instructor") {
+      return sampleSchedule;
+    }
+
+    const assignedCourseCodes = new Set(
+      getInstructorProfile(session.identifier).assignments.map((assignment) => assignment.courseCode)
+    );
+
+    const filteredSchedule: Record<string, ScheduleEntry> = {};
+
+    for (const [slot, entry] of Object.entries(sampleSchedule)) {
+      if (assignedCourseCodes.has(entry.code)) {
+        filteredSchedule[slot] = entry;
+      }
+    }
+
+    return filteredSchedule;
+  }, [session]);
+
+  const handlePublishSemesterLength = async () => {
+    const nextWeeks = Number(semesterWeeksInput);
+    const updated = await publishTimetableSettings(nextWeeks, semesterStartDateInput, semesterEndDateInput);
+    setSemesterWeeksInput(String(updated.semesterWeeks));
+    setSemesterStartDateInput(updated.semesterStartDate);
+    setSemesterEndDateInput(updated.semesterEndDate);
+    setActiveSemesterWeeks(updated.semesterWeeks);
+    setActiveSemesterStartDate(updated.semesterStartDate);
+    setActiveSemesterEndDate(updated.semesterEndDate);
+    setLastPublishedAt(updated.publishedAt);
+  };
+
+  const handleExportIcs = () => {
+    const sortedEntries = Object.entries(visibleSchedule).sort(([aKey], [bKey]) => {
+      const [aDay, aTime] = aKey.split("-");
+      const [bDay, bTime] = bKey.split("-");
+      const dayDiff = days.indexOf(aDay) - days.indexOf(bDay);
+
+      if (dayDiff !== 0) {
+        return dayDiff;
+      }
+
+      return timeSlots.indexOf(aTime) - timeSlots.indexOf(bTime);
+    });
+
+    const semesterStartDate = parseDateInput(activeSemesterStartDate);
+    const semesterEndDate = parseDateInput(activeSemesterEndDate);
+
+    if (!semesterStartDate || !semesterEndDate || semesterEndDate < semesterStartDate) {
+      window.alert("Semester date range is invalid. Ask admin to publish valid start and end dates.");
+      return;
+    }
+
+    const semesterUntilUtc = toIcsUntilUtc(activeSemesterEndDate);
+    const dtStamp = toIcsDateTimeUtc(new Date());
+
+    const calendarLines: string[] = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//Thapar Connect//Timetable Export//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Thapar Connect Timetable",
+      `X-WR-TIMEZONE:${ICS_TIMEZONE}`,
+      "BEGIN:VTIMEZONE",
+      `TZID:${ICS_TIMEZONE}`,
+      "BEGIN:STANDARD",
+      "TZOFFSETFROM:+0530",
+      "TZOFFSETTO:+0530",
+      "TZNAME:IST",
+      "DTSTART:19700101T000000",
+      "END:STANDARD",
+      "END:VTIMEZONE",
+    ];
+
+    sortedEntries.forEach(([key, entry]) => {
+      const [day, time] = key.split("-");
+      const dayIndex = dayToIndex[day];
+
+      if (typeof dayIndex !== "number") {
+        return;
+      }
+
+      const { hour, minute } = parseHourMinute(time);
+      const startDate = getFirstWeekdayOnOrAfter(semesterStartDate, dayIndex);
+
+      if (startDate > semesterEndDate) {
+        return;
+      }
+
+      startDate.setHours(hour, minute, 0, 0);
+
+      const endDate = new Date(startDate);
+      endDate.setHours(endDate.getHours() + entry.span);
+
+      const safeUid = `${entry.code}-${day}-${time}`.replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
+      const description = `Course: ${entry.course}\\nInstructor: ${entry.instructor}\\nRoom: ${entry.room}`;
+
+      calendarLines.push(
+        "BEGIN:VEVENT",
+        `UID:${safeUid}@thapar-connect`,
+        `DTSTAMP:${dtStamp}`,
+        `SUMMARY:${escapeIcsText(`${entry.code} ${entry.course}`)}`,
+        `DESCRIPTION:${escapeIcsText(description)}`,
+        `LOCATION:${escapeIcsText(entry.room)}`,
+        `DTSTART;TZID=${ICS_TIMEZONE}:${toIcsDateTimeLocal(startDate)}`,
+        `DTEND;TZID=${ICS_TIMEZONE}:${toIcsDateTimeLocal(endDate)}`,
+        `RRULE:FREQ=WEEKLY;UNTIL=${semesterUntilUtc}`,
+        "STATUS:CONFIRMED",
+        "END:VEVENT"
+      );
+    });
+
+    calendarLines.push("END:VCALENDAR");
+
+    const icsContent = `${calendarLines.join("\r\n")}\r\n`;
+    const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const exportDate = new Date();
+    const filename = `thapar-timetable-${exportDate.getFullYear()}-${pad(exportDate.getMonth() + 1)}-${pad(exportDate.getDate())}.ics`;
+
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   const skipCells = new Set<string>();
 
-  for (const key of Object.keys(sampleSchedule)) {
+  for (const key of Object.keys(visibleSchedule)) {
     const [day, time] = key.split("-");
-    const entry = sampleSchedule[key];
+    const entry = visibleSchedule[key];
     const startIdx = timeSlots.indexOf(time);
     for (let i = 1; i < entry.span; i++) {
       if (startIdx + i < timeSlots.length) {
@@ -51,31 +295,60 @@ const Timetable = () => {
         <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">Timetable</h1>
-            <p className="text-muted-foreground mt-1">Weekly class schedule view</p>
+            <p className="text-muted-foreground mt-1">Weekly class schedule view • Semester: {activeSemesterStartDate} to {activeSemesterEndDate} ({activeSemesterWeeks} weeks)</p>
           </div>
-          <div className="flex gap-3">
-            <Select value={semester} onValueChange={setSemester}>
-              <SelectTrigger className="w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="spring-2026">Spring 2026</SelectItem>
-                <SelectItem value="fall-2025">Fall 2025</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={department} onValueChange={setDepartment}>
-              <SelectTrigger className="w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="csed">CSED</SelectItem>
-                <SelectItem value="eced">ECED</SelectItem>
-                <SelectItem value="med">MED</SelectItem>
-                <SelectItem value="ced">CED</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Button onClick={handleExportIcs} variant="outline" className="gap-2 w-full md:w-auto" disabled={Object.keys(visibleSchedule).length === 0}>
+            <Download className="h-4 w-4" />
+            Import to Calendar
+          </Button>
         </div>
+
+        {session?.role === "admin" ? (
+          <Card className="mb-6">
+            <CardContent className="p-4 flex flex-col md:flex-row md:items-end gap-3">
+              <div className="w-full md:max-w-[220px]">
+                <p className="text-sm font-medium text-foreground mb-2">Semester Length (weeks)</p>
+                <Input
+                  type="number"
+                  min={1}
+                  max={52}
+                  value={semesterWeeksInput}
+                  onChange={(event) => setSemesterWeeksInput(event.target.value)}
+                />
+              </div>
+              <div className="w-full md:max-w-[220px]">
+                <p className="text-sm font-medium text-foreground mb-2">Semester Start Date</p>
+                <Input
+                  type="date"
+                  value={semesterStartDateInput}
+                  onChange={(event) => {
+                    const nextStart = event.target.value;
+                    setSemesterStartDateInput(nextStart);
+                    setSemesterWeeksInput(String(deriveSemesterWeeksFromDateRange(nextStart, semesterEndDateInput)));
+                  }}
+                />
+              </div>
+              <div className="w-full md:max-w-[220px]">
+                <p className="text-sm font-medium text-foreground mb-2">Semester End Date</p>
+                <Input
+                  type="date"
+                  value={semesterEndDateInput}
+                  onChange={(event) => {
+                    const nextEnd = event.target.value;
+                    setSemesterEndDateInput(nextEnd);
+                    setSemesterWeeksInput(String(deriveSemesterWeeksFromDateRange(semesterStartDateInput, nextEnd)));
+                  }}
+                />
+              </div>
+              <Button onClick={handlePublishSemesterLength}>Publish Timetable Settings</Button>
+              <p className="text-xs text-muted-foreground md:ml-auto">
+                {lastPublishedAt
+                  ? `Published: ${new Date(lastPublishedAt).toLocaleString()}`
+                  : "No publish settings yet. Default 16 weeks is active."}
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card className="shadow-card overflow-hidden">
           <CardContent className="p-0">
@@ -98,7 +371,7 @@ const Timetable = () => {
                       {days.map((day) => {
                         const key = `${day}-${time}`;
                         if (skipCells.has(key)) return null;
-                        const entry = sampleSchedule[key];
+                        const entry = visibleSchedule[key];
                         if (entry) {
                           return (
                             <td key={key} rowSpan={entry.span} className="p-1.5">
