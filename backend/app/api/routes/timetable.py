@@ -146,24 +146,6 @@ def _valid_semester(semester: int) -> None:
 
 
 # ── Generation ────────────────────────────────────────────────────────────────
-
-@router.post("/generate-timetable/{semester}", response_model=GenerateResponse)
-def generate_semester(semester: int, db: Session = Depends(get_db)):
-    """Run the solver for a single semester and persist the result."""
-    _valid_semester(semester)
-    placements, penalty = run_solver(db, semester=semester)
-    entries = persist_timetable(db, placements, semester=semester)
-    return GenerateResponse(
-        semester       = semester,
-        penalty_score  = penalty,
-        lectures_count = len(entries),
-        message        = (
-            f"Semester {semester} scheduled: {len(entries)} lectures, "
-            f"penalty={penalty}."
-        ),
-    )
-
-
 @router.post("/generate-timetable/all")
 def generate_all_semesters(db: Session = Depends(get_db)):
     """Run the solver for all semesters sequentially."""
@@ -185,6 +167,25 @@ def generate_all_semesters(db: Session = Depends(get_db)):
                 "detail":   str(e),
             })
     return {"results": results}
+
+@router.post("/generate-timetable/{semester}", response_model=GenerateResponse)
+def generate_semester(semester: int, db: Session = Depends(get_db)):
+    """Run the solver for a single semester and persist the result."""
+    _valid_semester(semester)
+    placements, penalty = run_solver(db, semester=semester)
+    entries = persist_timetable(db, placements, semester=semester)
+    return GenerateResponse(
+        semester       = semester,
+        penalty_score  = penalty,
+        lectures_count = len(entries),
+        message        = (
+            f"Semester {semester} scheduled: {len(entries)} lectures, "
+            f"penalty={penalty}."
+        ),
+    )
+
+
+
 
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
