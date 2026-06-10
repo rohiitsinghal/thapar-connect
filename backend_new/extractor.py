@@ -1,559 +1,535 @@
 """
 extractor.py
-─────────────────────────────────────────────────────────────────────────────
-Reads the 5 Excel input files and builds all in-memory data structures
-needed by the scheduler.
-
-Output (all plain Python dicts / lists — no database):
-  data["subjects"]           → {subject_code: Subject}
-  data["teachers"]           → {teacher_code: Teacher}
-  data["rooms"]              → {room_id: Room}
-  data["students"]           → {enrollment_no: Student}
-  data["curriculum"]         → {(program, semester): [CurriculumEntry]}
-  data["teacher_subjects"]   → {subject_code: teacher_code}
-  data["enrollment_groups"]  → {(semester, major, minor): [subject_code]}
-  data["conflict_graph"]     → {subject_code: set(subject_code)}  ← KEY for scheduler
-
-Usage:
-  from extractor import load_data
-  data = load_data("path/to/data/")
+Place this in: backend_new/
+Excel files go in: backend_new/data/
+  - backend_new/data/software_files.xlsx
+  - backend_new/data/rooms.xlsx
 """
 
-import pandas as pd
+import openpyxl
+import json
 import os
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass, asdict
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Canonical program name map
+# ─────────────────────────────────────────────────────────────────────────────
+PROGRAM_NAME_MAP = {
+    "data science & ai":               "Data Science & AI",
+    "data science and ai":             "Data Science & AI",
+    "data science":                    "Data Science & AI",
+    "cs/dsai":                         "Data Science & AI",
+    "computer science":                "Computer Science",
+    "computer sciences":               "Computer Science",
+    "psychology":                      "Psychology",
+    "b.a psychology":                  "Psychology",
+    "b.a psychology hons.":            "Psychology",
+    "psychology/cognitive science":    "Psychology",
+    "political science":               "Political Science",
+    "political science,":              "Political Science",
+    "philosophy/political science":    "Political Science",
+    "political science/economics":     "Political Science",
+    "environment & sustainability":    "Environment & Sustainability",
+    "environment and sustainability":  "Environment & Sustainability",
+    "philosophy":                      "Philosophy",
+    "casp":                            "CASP",
+    "casp ":                           "CASP",
+    "casp (art & media)":              "CASP",
+    "arts & media":                    "CASP",
+    "arts & media   ":                 "CASP",
+    "lcs":                             "LCS",
+    "literary and cultural studies":   "LCS",
+    "sociology":                       "Sociology",
+    "sociology ":                      "Sociology",
+    "bba":                             "BBA",
+    "economics":                       "Economics",
+    "history":                         "History",
+    "mathematics":                     "Mathematics",
+    "physics":                         "Physics",
+    "biotechnology":                   "Biotechnology",
+    "cognitive science":               "Cognitive Science",
+    "b com":                           "B Com",
+    "chemistry":                       "Chemistry",
+    "chemsitry":                       "Chemistry",
+}
+
+VALID_OFFERED_AS = {"major", "minor", "both", "major/minor"}
+
+
+def _canonical(name: str) -> str:
+    if not name or str(name).strip() in ("", "nan", "None"):
+        return ""
+    key = str(name).strip().lower()
+    if key not in PROGRAM_NAME_MAP:
+        print(f"    ⚠  Unknown program '{name}' — keeping as-is. Add to PROGRAM_NAME_MAP.")
+        return str(name).strip()
+    return PROGRAM_NAME_MAP[key]
+
+
+def _norm_offered(val) -> str:
+    if not val or str(val).strip() in ("", "nan", "None"):
+        return ""
+    n = str(val).strip().lower()
+    if n == "both":
+        n = "major/minor"
+    return n
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Data classes — typed containers (behave like dicts but with named fields)
+# Dataclasses
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class Subject:
-    subject_code: str
-    subject_name: str
+    course_code: str
+    title:       str
+    L: int
+    T: int
+    P: int
     credits: int
-
-    def __repr__(self):
-        return f"Subject({self.subject_code}: {self.subject_name})"
-
 
 @dataclass
 class Teacher:
     teacher_code: str
     teacher_name: str
-    email: str
-
-    def __repr__(self):
-        return f"Teacher({self.teacher_code}: {self.teacher_name})"
-
+    courses:      list
 
 @dataclass
 class Room:
-    room_id: str
-    room_name: str
-    capacity: int
-    room_type: str  # "lecture" | "lab"
-
-    def __repr__(self):
-        return f"Room({self.room_id}: {self.room_name}, cap={self.capacity}, {self.room_type})"
-
+    room_id:   str
+    capacity:  int
+    room_type: str   # "lecture" | "lab"
 
 @dataclass
 class Student:
     enrollment_no: str
-    student_name: str
-    email: str
-    major: str
-    minor: str
+    name:     str
+    email:    str
+    major:    str
+    minor:    str
     semester: int
-
-    def __repr__(self):
-        return f"Student({self.enrollment_no}: {self.student_name}, {self.major}/{self.minor}, sem={self.semester})"
-
 
 @dataclass
 class CurriculumEntry:
-    program: str
-    semester: int
-    subject_code: str
-    subject_name: str
-    credits: int
-    offered_as: str  # "major" | "minor" | "both" | "foundation"
-
-    def __repr__(self):
-        return f"Curriculum({self.program} sem{self.semester}: {self.subject_code} [{self.offered_as}])"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Validation helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-class ValidationError(Exception):
-    pass
-
-
-def _validate(condition: bool, message: str):
-    """Raise a clear ValidationError if condition is False."""
-    if not condition:
-        raise ValidationError(f"\n  ✗ VALIDATION ERROR: {message}")
-
-
-def _warn(message: str):
-    print(f"  ⚠ WARNING: {message}")
+    program:      str
+    semester:     int
+    course_code:  str
+    title:        str
+    credits:      int
+    offered_as:   str
+    teacher:      str
+    teacher_code: str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Individual file loaders
+# Loaders
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_students(path: str) -> dict[str, Student]:
+def _load_curriculum_and_teachers(wb):
     """
-    Loads students.xlsx
-    Columns: enrollment_no | student_name | email | major | minor | semester
-    Returns: {enrollment_no: Student}
+    Reads 'curriculum', 'teachers', 'teacher_ name' sheets from software_files.xlsx
+    Row 0 of curriculum = title banner (skip)
+    Row 1 of curriculum = actual headers
     """
-    print("  Loading students.xlsx ...")
-    df = pd.read_excel(path, dtype={"enrollment_no": str})
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+    print("\n  [1/3] Loading curriculum + teachers from software_files.xlsx ...")
 
-    required = {"enrollment_no", "student_name", "email", "major", "minor", "semester"}
-    _validate(required.issubset(df.columns),
-              f"students.xlsx missing columns: {required - set(df.columns)}")
+    # ── curriculum sheet ──
+    ws        = wb['curriculum']
+    rows      = list(ws.iter_rows(values_only=True))
+    data_rows = [r for r in rows[2:] if any(c is not None for c in r)]
 
-    # Clean strings
-    for col in ["enrollment_no", "student_name", "email", "major", "minor"]:
-        df[col] = df[col].fillna("").astype(str).str.strip()
+    curriculum       = defaultdict(list)
+    subjects         = {}
+    teacher_subjects = {}           # {course_code: teacher_name}
+    teacher_courses  = defaultdict(set)
+    teacher_info     = {}           # {teacher_code: teacher_name}
 
-    df["semester"] = pd.to_numeric(df["semester"], errors="coerce")
+    for r in data_rows:
+        program = _canonical(str(r[1]).strip() if r[1] else "")
 
-    students = {}
-    for _, row in df.iterrows():
-        # Validate enrollment number
-        _validate(row["enrollment_no"] != "",
-                  f"students.xlsx: blank enrollment_no found in row {_ + 2}")
-
-        _validate(row["enrollment_no"] not in students,
-                  f"students.xlsx: duplicate enrollment_no '{row['enrollment_no']}'")
-
-        _validate(pd.notna(row["semester"]),
-                  f"students.xlsx: invalid semester for student '{row['enrollment_no']}'")
-
-        if row["major"] == "" and int(row["semester"]) > 2:
-            _warn(f"Student {row['enrollment_no']} is in sem {int(row['semester'])} but has no major.")
-
-        students[row["enrollment_no"]] = Student(
-            enrollment_no = row["enrollment_no"],
-            student_name  = row["student_name"],
-            email         = row["email"],
-            major         = row["major"],
-            minor         = row["minor"],
-            semester      = int(row["semester"]),
-        )
-
-    print(f"    → {len(students)} students loaded.")
-    return students
-
-
-def _load_curriculum(path: str) -> tuple[dict, dict]:
-    """
-    Loads curriculum.xlsx
-    Columns: program | semester | subject_code | subject_name | credits | offered_as
-    Returns:
-      curriculum  → {(program, semester): [CurriculumEntry]}
-      subjects    → {subject_code: Subject}   (derived — single source of truth)
-    """
-    print("  Loading curriculum.xlsx ...")
-    df = pd.read_excel(path)
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-
-    required = {"program", "semester", "subject_code", "subject_name", "credits", "offered_as"}
-    _validate(required.issubset(df.columns),
-              f"curriculum.xlsx missing columns: {required - set(df.columns)}")
-
-    VALID_ROLES = {"major", "minor", "both", "foundation"}
-    for col in ["program", "subject_code", "subject_name", "offered_as"]:
-        df[col] = df[col].fillna("").astype(str).str.strip()
-
-    df["semester"] = pd.to_numeric(df["semester"], errors="coerce")
-    df["credits"]  = pd.to_numeric(df["credits"],  errors="coerce").fillna(0).astype(int)
-
-    curriculum = defaultdict(list)
-    subjects   = {}
-    seen       = set()  # track (program, semester, subject_code) for duplicates
-
-    for _, row in df.iterrows():
-        _validate(row["program"]       != "", f"curriculum.xlsx row {_ + 2}: blank 'program'")
-        _validate(row["subject_code"]  != "", f"curriculum.xlsx row {_ + 2}: blank 'subject_code'")
-        _validate(row["offered_as"] in VALID_ROLES,
-                  f"curriculum.xlsx row {_ + 2}: invalid offered_as='{row['offered_as']}' "
-                  f"(must be one of {VALID_ROLES})")
-        _validate(pd.notna(row["semester"]),
-                  f"curriculum.xlsx row {_ + 2}: invalid semester value")
-
-        key = (row["program"], int(row["semester"]), row["subject_code"])
-        _validate(key not in seen,
-                  f"curriculum.xlsx: duplicate row for {key}")
-        seen.add(key)
-
-        entry = CurriculumEntry(
-            program      = row["program"],
-            semester     = int(row["semester"]),
-            subject_code = row["subject_code"],
-            subject_name = row["subject_name"],
-            credits      = row["credits"],
-            offered_as   = row["offered_as"],
-        )
-        curriculum[(row["program"], int(row["semester"]))].append(entry)
-
-        # Build subjects dict — if same code appears twice, name/credits must match
-        code = row["subject_code"]
-        if code in subjects:
-            _validate(
-                subjects[code].subject_name == row["subject_name"],
-                f"curriculum.xlsx: subject_code '{code}' has inconsistent names: "
-                f"'{subjects[code].subject_name}' vs '{row['subject_name']}'"
-            )
+        # Fix corrupt semester (Excel stores datetime for some cells)
+        raw_sem = r[2]
+        if hasattr(raw_sem, 'day'):
+            semester = raw_sem.day
         else:
-            subjects[code] = Subject(
-                subject_code = code,
-                subject_name = row["subject_name"],
-                credits      = row["credits"],
-            )
+            try:
+                semester = int(float(str(raw_sem)))
+            except Exception:
+                print(f"    ⚠  Cannot parse semester '{raw_sem}' — skipping row")
+                continue
 
-    curriculum = dict(curriculum)
-    print(f"    → {len(subjects)} unique subjects, "
-          f"{sum(len(v) for v in curriculum.values())} curriculum entries loaded.")
-    return curriculum, subjects
+        code         = str(r[3]).strip() if r[3] else ""
+        title        = str(r[4]).strip() if r[4] else ""
+        L            = int(r[5] or 0)
+        T            = int(r[6] or 0)
+        P            = int(r[7] or 0)
+        credits      = int(r[8] or 0)
+        offered_raw  = str(r[9]).strip() if r[9] else ""
+        teacher_name = str(r[10]).strip() if r[10] else ""
+        teacher_code = str(r[11]).strip() if r[11] else ""
 
-
-def _load_teachers(path: str) -> dict[str, Teacher]:
-    """
-    Loads teachers.xlsx
-    Columns: teacher_code | teacher_name | email
-    Returns: {teacher_code: Teacher}
-    """
-    print("  Loading teachers.xlsx ...")
-    df = pd.read_excel(path)
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-
-    required = {"teacher_code", "teacher_name", "email"}
-    _validate(required.issubset(df.columns),
-              f"teachers.xlsx missing columns: {required - set(df.columns)}")
-
-    for col in ["teacher_code", "teacher_name", "email"]:
-        df[col] = df[col].fillna("").astype(str).str.strip()
-
-    teachers = {}
-    for _, row in df.iterrows():
-        _validate(row["teacher_code"] != "", f"teachers.xlsx row {_ + 2}: blank teacher_code")
-        _validate(row["teacher_code"] not in teachers,
-                  f"teachers.xlsx: duplicate teacher_code '{row['teacher_code']}'")
-
-        teachers[row["teacher_code"]] = Teacher(
-            teacher_code = row["teacher_code"],
-            teacher_name = row["teacher_name"],
-            email        = row["email"],
-        )
-
-    print(f"    → {len(teachers)} teachers loaded.")
-    return teachers
-
-
-def _load_teacher_subjects(path: str) -> dict[str, str]:
-    """
-    Loads teacher_subjects.xlsx
-    Columns: teacher_code | subject_code
-    Returns: {subject_code: teacher_code}
-    Note: one teacher per subject (each class is taught by one person, not repeated)
-    """
-    print("  Loading teacher_subjects.xlsx ...")
-    df = pd.read_excel(path)
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-
-    required = {"teacher_code", "subject_code"}
-    _validate(required.issubset(df.columns),
-              f"teacher_subjects.xlsx missing columns: {required - set(df.columns)}")
-
-    for col in ["teacher_code", "subject_code"]:
-        df[col] = df[col].fillna("").astype(str).str.strip()
-
-    teacher_subjects = {}
-    for _, row in df.iterrows():
-        _validate(row["teacher_code"] != "", f"teacher_subjects.xlsx row {_ + 2}: blank teacher_code")
-        _validate(row["subject_code"] != "", f"teacher_subjects.xlsx row {_ + 2}: blank subject_code")
-
-        if row["subject_code"] in teacher_subjects:
-            _warn(f"subject '{row['subject_code']}' has multiple teachers assigned — "
-                  f"keeping first ({teacher_subjects[row['subject_code']]}), ignoring {row['teacher_code']}")
+        if not program or not code:
             continue
 
-        teacher_subjects[row["subject_code"]] = row["teacher_code"]
+        offered = _norm_offered(offered_raw)
+        if offered not in VALID_OFFERED_AS:
+            print(f"    ⚠  Invalid offered_as='{offered_raw}' for {code} — skipping")
+            continue
 
-    print(f"    → {len(teacher_subjects)} teacher-subject mappings loaded.")
-    return teacher_subjects
-
-
-def _load_rooms(path: str) -> dict[str, Room]:
-    """
-    Loads rooms.xlsx
-    Columns: room_id | room_name | capacity | room_type
-    Returns: {room_id: Room}
-    """
-    print("  Loading rooms.xlsx ...")
-    df = pd.read_excel(path)
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-
-    required = {"room_id", "room_name", "capacity", "room_type"}
-    _validate(required.issubset(df.columns),
-              f"rooms.xlsx missing columns: {required - set(df.columns)}")
-
-    for col in ["room_id", "room_name", "room_type"]:
-        df[col] = df[col].fillna("").astype(str).str.strip()
-
-    df["capacity"] = pd.to_numeric(df["capacity"], errors="coerce").fillna(0).astype(int)
-
-    VALID_TYPES = {"lecture", "lab"}
-    rooms = {}
-    for _, row in df.iterrows():
-        _validate(row["room_id"] != "", f"rooms.xlsx row {_ + 2}: blank room_id")
-        _validate(row["room_id"] not in rooms,
-                  f"rooms.xlsx: duplicate room_id '{row['room_id']}'")
-        _validate(row["room_type"] in VALID_TYPES,
-                  f"rooms.xlsx row {_ + 2}: invalid room_type='{row['room_type']}' "
-                  f"(must be 'lecture' or 'lab')")
-
-        rooms[row["room_id"]] = Room(
-            room_id   = row["room_id"],
-            room_name = row["room_name"],
-            capacity  = row["capacity"],
-            room_type = row["room_type"],
+        entry = CurriculumEntry(
+            program=program, semester=semester, course_code=code,
+            title=title, credits=credits, offered_as=offered,
+            teacher=teacher_name, teacher_code=teacher_code,
         )
+        curriculum[(program, semester)].append(entry)
 
-    print(f"    → {len(rooms)} rooms loaded.")
+        if code not in subjects:
+            subjects[code] = Subject(course_code=code, title=title,
+                                     L=L, T=T, P=P, credits=credits)
+
+        if teacher_name and teacher_code:
+            teacher_subjects[code] = teacher_name
+            teacher_info[teacher_code] = teacher_name
+            teacher_courses[teacher_code].add(code)
+
+    # ── teacher_ name sheet (canonical teacher roster — highest priority) ──
+    ws_tn = wb['teacher_ name']
+    for r in list(ws_tn.iter_rows(values_only=True))[1:]:
+        if not any(c for c in r):
+            continue
+        code = str(r[0]).strip() if r[0] else ""
+        name = str(r[1]).strip() if r[1] else ""
+        tc   = str(r[2]).strip() if r[2] else ""
+        if not code or not name:
+            continue
+        teacher_subjects[code] = name      # overrides curriculum inline value
+        if tc:
+            teacher_info[tc] = name
+            teacher_courses[tc].add(code)
+
+    # ── teachers sheet (subject_code | teacher_name | teacher_code) ──
+    ws_t = wb['teachers']
+    for r in list(ws_t.iter_rows(values_only=True))[1:]:
+        if not any(c for c in r):
+            continue
+        code = str(r[0]).strip() if r[0] else ""
+        name = str(r[1]).strip() if r[1] else ""
+        tc   = str(r[2]).strip() if r[2] else ""
+        if not code or not name or code == "nan" or name == "nan":
+            continue
+        if code not in teacher_subjects:   # only fill gaps
+            teacher_subjects[code] = name
+        if tc and tc not in ("nan", ""):
+            teacher_info[tc] = name
+            teacher_courses[tc].add(code)
+
+    # Build Teacher objects
+    teachers = {
+        tc: Teacher(teacher_code=tc, teacher_name=name,
+                    courses=sorted(teacher_courses[tc]))
+        for tc, name in teacher_info.items()
+    }
+
+    curriculum = dict(curriculum)
+    print(f"    ✓ {len(subjects)} subjects | "
+          f"{sum(len(v) for v in curriculum.values())} curriculum entries | "
+          f"{len(curriculum)} (program, semester) combinations")
+    print(f"    ✓ {len(teachers)} teachers | {len(teacher_subjects)} subject→teacher mappings")
+    return curriculum, subjects, teachers, teacher_subjects
+
+
+def _load_rooms(rooms_path: str) -> dict:
+    """
+    Reads backend_new/data/rooms.xlsx
+    Columns: room_id (col A) | [blank] | [blank] | capacity (col D)
+    Room type derived from prefix: LH = lecture, CL = lab
+    """
+    print("\n  [2/3] Loading rooms.xlsx ...")
+    wb = openpyxl.load_workbook(rooms_path, read_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))[1:]   # skip header
+
+    rooms = {}
+    for r in rows:
+        if not any(c for c in r):
+            continue
+        rid = str(r[0]).strip() if r[0] else ""
+        # Capacity is in column D (index 3) — two blank filler columns in between
+        cap = 0
+        if len(r) > 3 and r[3] is not None:
+            try:
+                cap = int(float(str(r[3])))
+            except Exception:
+                cap = 0
+
+        if not rid or rid.lower() in ("nan", "room id", "room_id", ""):
+            continue
+
+        prefix    = rid.replace("-", "").replace(" ", "").upper()[:2]
+        room_type = "lab" if prefix == "CL" else "lecture"
+
+        if rid not in rooms:
+            rooms[rid] = Room(room_id=rid, capacity=cap, room_type=room_type)
+
+    lh = sum(1 for r in rooms.values() if r.room_type == "lecture")
+    cl = sum(1 for r in rooms.values() if r.room_type == "lab")
+    print(f"    ✓ {len(rooms)} rooms  ({lh} lecture halls, {cl} computer labs)")
     return rooms
 
 
+def _load_students(wb) -> dict:
+    """Reads Sheet1 from software_files.xlsx"""
+    print("\n  [3/3] Loading students from Sheet1 ...")
+    ws   = wb['Sheet1']
+    rows = list(ws.iter_rows(values_only=True))[1:]   # skip header
+
+    students   = {}
+    skipped    = 0
+    sem_counts = defaultdict(int)
+
+    for r in rows:
+        if not any(c for c in r):
+            continue
+
+        enr = r[0]
+        if enr is None:
+            skipped += 1
+            continue
+        try:
+            enr = str(int(float(str(enr))))
+        except Exception:
+            skipped += 1
+            continue
+
+        name     = str(r[1]).strip() if r[1] else ""
+        email    = str(r[2]).strip() if r[2] else ""
+        major    = _canonical(str(r[3]).strip() if r[3] else "")
+        minor    = _canonical(str(r[4]).strip() if r[4] else "")
+        try:
+            semester = int(float(str(r[5])))
+        except Exception:
+            semester = 0
+
+        if enr in students:
+            print(f"    ⚠  Duplicate enrollment_no {enr} — skipping")
+            continue
+
+        students[enr] = Student(enrollment_no=enr, name=name, email=email,
+                                major=major, minor=minor, semester=semester)
+        sem_counts[semester] += 1
+
+    if skipped:
+        print(f"    ⚠  Skipped {skipped} blank/invalid rows")
+
+    print(f"    ✓ {len(students)} students loaded")
+    for sem, cnt in sorted(sem_counts.items()):
+        print(f"      Semester {sem}: {cnt} students")
+    return students
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Cross-file validation
+# Enrollment groups + conflict graph
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _cross_validate(students, curriculum, subjects, teachers, teacher_subjects, rooms):
-    print("\n  Running cross-file validation ...")
-    errors = []
-
-    # Every student's major/minor must appear as a program in curriculum
-    all_programs = {prog for (prog, _) in curriculum.keys()}
-
-    for enr, s in students.items():
-        if s.semester <= 2:
-            continue  # Foundation students have no major/minor yet
-        if s.major and s.major not in all_programs:
-            errors.append(f"Student {enr}: major '{s.major}' not found in curriculum.xlsx")
-        if s.minor and s.minor not in all_programs:
-            errors.append(f"Student {enr}: minor '{s.minor}' not found in curriculum.xlsx")
-
-    # Every subject in teacher_subjects must exist in subjects
-    for code, tcode in teacher_subjects.items():
-        if code not in subjects:
-            errors.append(f"teacher_subjects.xlsx: subject_code '{code}' not in curriculum.xlsx")
-        if tcode not in teachers:
-            errors.append(f"teacher_subjects.xlsx: teacher_code '{tcode}' not in teachers.xlsx")
-
-    # Every subject in curriculum must have a teacher assigned
-    for code in subjects:
-        if code not in teacher_subjects:
-            errors.append(f"Subject '{code}' ({subjects[code].subject_name}) has no teacher assigned in teacher_subjects.xlsx")
-
-    if errors:
-        print("\n  ✗ Cross-validation failed:")
-        for e in errors:
-            print(f"    - {e}")
-        raise ValidationError(f"{len(errors)} cross-validation error(s) found. Fix the above before scheduling.")
-
-    print("  ✓ All cross-file checks passed.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Enrollment groups builder
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_enrollment_groups(students, curriculum) -> dict[tuple, list[str]]:
-    """
-    Derives every real (semester, major, minor) combination from actual
-    student data and maps each group to its list of subject_codes.
-
-    How subjects are resolved per group:
-      - major subjects: curriculum entries for (major, semester) where offered_as in {major, both}
-      - minor subjects: curriculum entries for (minor, semester) where offered_as in {minor, both}
-      - foundation:     curriculum entries for ("Foundation", semester)
-
-    Returns: {(semester, major, minor): [subject_code, ...]}
-    """
+def _build_enrollment_groups(students, curriculum) -> dict:
     print("\n  Building enrollment groups ...")
-
-    # Collect unique (semester, major, minor) combos from real student data
-    combos = set()
+    combos  = set()
     for s in students.values():
         combos.add((s.semester, s.major, s.minor))
 
-    enrollment_groups = {}
+    groups  = {}
+    missing = set()
 
-    for (semester, major, minor) in combos:
-        subject_codes = []
+    for (semester, major, minor) in sorted(combos):
+        codes = []
 
-        if semester <= 2 or major == "":
-            # Foundation semester — all subjects from Foundation program
-            foundation_entries = curriculum.get(("Foundation", semester), [])
-            subject_codes = [e.subject_code for e in foundation_entries]
-        else:
-            # Major subjects
-            major_entries = curriculum.get((major, semester), [])
-            for e in major_entries:
-                if e.offered_as in ("major", "both"):
-                    subject_codes.append(e.subject_code)
+        major_entries = curriculum.get((major, semester), [])
+        if not major_entries and major:
+            missing.add(f"major='{major}' sem={semester}")
+        for e in major_entries:
+            if e.offered_as in ("major", "major/minor"):
+                codes.append(e.course_code)
 
-            # Minor subjects (if student has a minor)
-            if minor:
-                minor_entries = curriculum.get((minor, semester), [])
-                for e in minor_entries:
-                    if e.offered_as in ("minor", "both"):
-                        # Avoid double-adding if already in major list
-                        if e.subject_code not in subject_codes:
-                            subject_codes.append(e.subject_code)
+        if minor:
+            minor_entries = curriculum.get((minor, semester), [])
+            if not minor_entries:
+                missing.add(f"minor='{minor}' sem={semester}")
+            for e in minor_entries:
+                if e.offered_as in ("minor", "major/minor"):
+                    if e.course_code not in codes:
+                        codes.append(e.course_code)
 
-        enrollment_groups[(semester, major, minor)] = subject_codes
+        # Deduplicate while preserving order
+        groups[(semester, major, minor)] = list(dict.fromkeys(codes))
 
-    print(f"    → {len(enrollment_groups)} unique enrollment groups derived from student data.")
-    for group, codes in sorted(enrollment_groups.items()):
-        sem, maj, mn = group
-        label = f"sem{sem} | {maj or 'Foundation'}" + (f" + {mn}" if mn else "")
-        print(f"      {label:45s} → {len(codes)} subjects: {codes}")
+    if missing:
+        print(f"    ⚠  No curriculum data for (groups will have 0 subjects):")
+        for m in sorted(missing):
+            print(f"      - {m}")
 
-    return enrollment_groups
+    active = sum(1 for v in groups.values() if v)
+    print(f"    ✓ {len(groups)} enrollment groups total  |  {active} active (>0 subjects)")
+    for (sem, maj, mn), codes in sorted(groups.items()):
+        if codes:
+            label = f"sem{sem} | {maj}" + (f" + {mn}" if mn else "")
+            print(f"      {label:55s} → {len(codes)} subjects")
+
+    return groups
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Conflict graph builder  ← this is what the scheduler actually uses
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_conflict_graph(enrollment_groups: dict) -> dict[str, set]:
-    """
-    Builds a conflict graph from enrollment groups.
-
-    An edge exists between subject A and subject B if there is ANY enrollment
-    group that contains both. This means they can never be scheduled at the
-    same timeslot — a student would have to attend both simultaneously.
-
-    Returns: {subject_code: set(subject_codes that conflict with it)}
-    """
+def _build_conflict_graph(groups) -> dict:
     print("\n  Building conflict graph ...")
-    conflict_graph = defaultdict(set)
+    from collections import defaultdict
+    graph = defaultdict(set)
+    for codes in groups.values():
+        for i in range(len(codes)):
+            for j in range(i + 1, len(codes)):
+                a, b = codes[i], codes[j]
+                graph[a].add(b)
+                graph[b].add(a)
+    graph = dict(graph)
+    edges = sum(len(v) for v in graph.values()) // 2
+    print(f"    ✓ {len(graph)} subjects in conflict graph  |  {edges} conflict edges")
+    return graph
 
-    for (semester, major, minor), subject_codes in enrollment_groups.items():
-        # Every pair of subjects in this group conflicts with each other
-        for i in range(len(subject_codes)):
-            for j in range(i + 1, len(subject_codes)):
-                a, b = subject_codes[i], subject_codes[j]
-                conflict_graph[a].add(b)
-                conflict_graph[b].add(a)
 
-    total_edges = sum(len(v) for v in conflict_graph.values()) // 2
-    print(f"    → {len(conflict_graph)} subjects in graph, {total_edges} conflict edges.")
+# ─────────────────────────────────────────────────────────────────────────────
+# Validation
+# ─────────────────────────────────────────────────────────────────────────────
 
-    return dict(conflict_graph)
+def _validate(students, curriculum, subjects, teacher_subjects):
+    print("\n  Running validation ...")
+    all_programs = {prog for (prog, _) in curriculum.keys()}
+
+    no_teacher = [f"{c} ({subjects[c].title})"
+                  for c in subjects if c not in teacher_subjects]
+    if no_teacher:
+        print(f"    ⚠  {len(no_teacher)} subjects with no teacher assigned:")
+        for s in no_teacher:
+            print(f"      - {s}")
+
+    missing_prog = set()
+    for s in students.values():
+        if s.major and s.major not in all_programs:
+            missing_prog.add(f"major '{s.major}' sem {s.semester}")
+        if s.minor and s.minor not in all_programs:
+            missing_prog.add(f"minor '{s.minor}' sem {s.semester}")
+    if missing_prog:
+        print(f"    ⚠  Programs in students not found in curriculum ({len(missing_prog)}):")
+        for p in sorted(missing_prog):
+            print(f"      - {p}")
+
+    if not no_teacher and not missing_prog:
+        print("    ✓ All checks passed.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JSON serialiser
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _to_json(data: dict) -> dict:
+    def conv(obj):
+        if hasattr(obj, "__dataclass_fields__"):
+            return asdict(obj)
+        if isinstance(obj, set):
+            return sorted(list(obj))
+        if isinstance(obj, dict):
+            return {str(k): conv(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [conv(i) for i in obj]
+        return obj
+
+    return {
+        "subjects":    conv(data["subjects"]),
+        "teachers":    conv(data["teachers"]),
+        "rooms":       conv(data["rooms"]),
+        "students":    conv(data["students"]),
+        "curriculum": {
+            f"{prog}|sem{sem}": [asdict(e) for e in entries]
+            for (prog, sem), entries in data["curriculum"].items()
+        },
+        "teacher_subjects": data["teacher_subjects"],
+        "enrollment_groups": {
+            f"sem{sem}|{maj}|{mn}": codes
+            for (sem, maj, mn), codes in data["enrollment_groups"].items()
+        },
+        "conflict_graph": {
+            k: sorted(v) for k, v in data["conflict_graph"].items()
+        },
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main public function
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_data(data_dir: str) -> dict:
+def load_data(software_xlsx: str, rooms_xlsx: str, output_json: str, active_semesters: list = None) -> dict:
     """
-    Loads all 5 Excel files from data_dir, validates them, and returns
-    a single dict containing all data structures needed by the scheduler.
-
     Args:
-        data_dir: path to folder containing the 5 Excel files
-
-    Returns:
-        {
-          "subjects"          : {subject_code: Subject},
-          "teachers"          : {teacher_code: Teacher},
-          "rooms"             : {room_id: Room},
-          "students"          : {enrollment_no: Student},
-          "curriculum"        : {(program, semester): [CurriculumEntry]},
-          "teacher_subjects"  : {subject_code: teacher_code},
-          "enrollment_groups" : {(semester, major, minor): [subject_code]},
-          "conflict_graph"    : {subject_code: set(subject_code)},
-        }
+        software_xlsx : path to backend_new/data/software_files.xlsx
+        rooms_xlsx    : path to backend_new/data/rooms.xlsx
+        output_json   : path to write extracted_data.json (in backend_new/output/)
     """
-    p = lambda f: os.path.join(data_dir, f)
+    print("=" * 65)
+    print("  TSLAS DATA EXTRACTOR")
+    print("=" * 65)
 
-    print("=" * 60)
-    print("  DATA EXTRACTOR")
-    print("=" * 60)
+    wb = openpyxl.load_workbook(software_xlsx, read_only=True, data_only=True)
 
-    # ── Load individual files ──
-    students         = _load_students(p("students.xlsx"))
-    curriculum, subjects = _load_curriculum(p("curriculum.xlsx"))
-    teachers         = _load_teachers(p("teachers.xlsx"))
-    teacher_subjects = _load_teacher_subjects(p("teacher_subjects.xlsx"))
-    rooms            = _load_rooms(p("rooms.xlsx"))
+    curriculum, subjects, teachers, teacher_subjects = \
+        _load_curriculum_and_teachers(wb)
+    rooms    = _load_rooms(rooms_xlsx)
+    students = _load_students(wb)
 
-    # ── Cross-file validation ──
-    _cross_validate(students, curriculum, subjects, teachers, teacher_subjects, rooms)
+    # ── Filter students to active semesters only ──
+    if active_semesters:
+        before = len(students)
+        students = {
+            enr: s for enr, s in students.items()
+            if s.semester in active_semesters
+        }
+        filtered = before - len(students)
+        parity = 'even' if active_semesters[0] % 2 == 0 else 'odd'
+        print(f"  Semester filter: {parity.upper()} {active_semesters}")
+        print(f"  Students after filter: {len(students)}  ({filtered} excluded)")
 
-    # ── Build derived structures ──
+    _validate(students, curriculum, subjects, teacher_subjects)
+
     enrollment_groups = _build_enrollment_groups(students, curriculum)
     conflict_graph    = _build_conflict_graph(enrollment_groups)
 
-    print("\n" + "=" * 60)
+    data = {
+        "subjects":          subjects,
+        "teachers":          teachers,
+        "rooms":             rooms,
+        "students":          students,
+        "curriculum":        curriculum,
+        "teacher_subjects":  teacher_subjects,
+        "enrollment_groups": enrollment_groups,
+        "conflict_graph":    conflict_graph,
+    }
+
+    os.makedirs(os.path.dirname(output_json), exist_ok=True)
+    with open(output_json, "w", encoding="utf-8") as f:
+        json.dump(_to_json(data), f, indent=2, ensure_ascii=False)
+    print(f"\n  ✓ Saved → {output_json}")
+
+    print("\n" + "=" * 65)
     print("  EXTRACTION COMPLETE")
-    print("=" * 60)
+    print("=" * 65)
+    parity_label = ""
+    if active_semesters:
+        p = 'EVEN' if active_semesters[0] % 2 == 0 else 'ODD'
+        parity_label = f"  ({p} semesters: {active_semesters})"
     print(f"  Subjects          : {len(subjects)}")
     print(f"  Teachers          : {len(teachers)}")
     print(f"  Rooms             : {len(rooms)}")
-    print(f"  Students          : {len(students)}")
-    print(f"  Enrollment groups : {len(enrollment_groups)}")
-    print(f"  Conflict edges    : {sum(len(v) for v in conflict_graph.values()) // 2}")
-    print("=" * 60)
+    print(f"  Students          : {len(students)}{parity_label}")
+    active = sum(1 for v in enrollment_groups.values() if v)
+    print(f"  Enrollment groups : {len(enrollment_groups)}  ({active} active)")
+    edges = sum(len(v) for v in conflict_graph.values()) // 2
+    print(f"  Conflict edges    : {edges}")
+    print("=" * 65)
 
-    return {
-        "subjects"          : subjects,
-        "teachers"          : teachers,
-        "rooms"             : rooms,
-        "students"          : students,
-        "curriculum"        : curriculum,
-        "teacher_subjects"  : teacher_subjects,
-        "enrollment_groups" : enrollment_groups,
-        "conflict_graph"    : conflict_graph,
-    }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Quick test when run directly
-# ─────────────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    data = load_data("/home/claude/data")
-
-    print("\n── Sample lookups ──")
-    print("\nSubject TB2401:")
-    print(" ", data["subjects"]["TB2401"])
-
-    print("\nTeacher AP teaches:")
-    taught = [code for code, t in data["teacher_subjects"].items() if t == "AP"]
-    for code in taught:
-        print(" ", data["subjects"][code])
-
-    print("\nConflicts for TB2401 (subjects that can't share a slot with it):")
-    for code in sorted(data["conflict_graph"].get("TB2401", [])):
-        print(" ", data["subjects"].get(code, code))
-
-    print("\nEnrollment group (sem=4, major=BBA, minor=Economics):")
-    group = data["enrollment_groups"].get((4, "BBA", "Economics"), [])
-    for code in group:
-        print(" ", data["subjects"][code])
+    return data
