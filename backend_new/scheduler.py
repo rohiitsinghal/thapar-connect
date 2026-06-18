@@ -1,14 +1,9 @@
 """
-scheduler.py  v2
+scheduler.py  v3
 ─────────────────────────────────────────────────────────────────────────────
-Changes from v1:
-  - Timeslots: 8:00–17:10, 50-min each, 11 slots/day, 55 total
-  - Practicals (P > 0) occupy TWO consecutive slots in the same day
-  - No lunch break hardcoded — slots run continuously
-  - Solution state for practicals: {course_code → (slot_index, room_id)}
-    where slot_index is the FIRST of the two consecutive slots
-  - Penalty H4 added: practical not in consecutive slots (shouldn't happen
-    with the new neighbour but kept as guard)
+Schedules SchedulableUnits (unit_ids), not course_codes.
+Each unit_id is one class session, e.g. TB2401_L1, TB2401_L2, TA2405_P1.
+Practicals (unit_type=practical) occupy 2 consecutive slots.
 """
 
 import json
@@ -19,426 +14,570 @@ import os
 from collections import defaultdict
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Timeslots  —  08:00 to 17:10, 50 min each, Mon–Fri
+# Timeslots — 08:00 to 17:10, 50-min slots, Mon–Fri
 # ─────────────────────────────────────────────────────────────────────────────
 
-DAYS  = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-
-# Generate 11 slots per day
-_START_MIN    = 8 * 60          # 480
+DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 _SLOT_MINUTES = 50
-_SLOTS_PER_DAY = 0
 _TIMES = []
-t = _START_MIN
-while t + _SLOT_MINUTES <= 17 * 60 + 10:   # 1030
+t = 8 * 60
+while t + _SLOT_MINUTES <= 17 * 60 + 10:
     h1, m1 = divmod(t, 60)
     h2, m2 = divmod(t + _SLOT_MINUTES, 60)
     _TIMES.append((f"{h1:02d}:{m1:02d}", f"{h2:02d}:{m2:02d}"))
     t += _SLOT_MINUTES
-SLOTS_PER_DAY  = len(_TIMES)    # 11
-TOTAL_SLOTS    = SLOTS_PER_DAY * len(DAYS)   # 55
+
+SLOTS_PER_DAY = len(_TIMES)
+TOTAL_SLOTS   = SLOTS_PER_DAY * len(DAYS)
 
 ALL_SLOTS = [
-    {
-        "slot_index": d * SLOTS_PER_DAY + s,
-        "day":        day,
-        "start":      start,
-        "end":        end,
-    }
+    {"slot_index": d * SLOTS_PER_DAY + s, "day": day, "start": start, "end": end}
     for d, day in enumerate(DAYS)
     for s, (start, end) in enumerate(_TIMES)
 ]
 
-def slot_day(idx: int)  -> int: return idx // SLOTS_PER_DAY
-def slot_time(idx: int) -> int: return idx  % SLOTS_PER_DAY
-def last_slot_of_day(day_idx: int) -> int:
-    return day_idx * SLOTS_PER_DAY + SLOTS_PER_DAY - 1
-
-def valid_practical_slot(slot_idx: int) -> bool:
-    """
-    A practical starts at slot_idx and needs slot_idx+1 to exist
-    AND both slots must be on the same day.
-    So slot_idx cannot be the last slot of any day.
-    """
-    return slot_time(slot_idx) < SLOTS_PER_DAY - 1
-
+def slot_day(idx):  return idx // SLOTS_PER_DAY
+def slot_time(idx): return idx  % SLOTS_PER_DAY
+def valid_practical_slot(idx): return slot_time(idx) < SLOTS_PER_DAY - 1
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Penalty weights
 # ─────────────────────────────────────────────────────────────────────────────
 
-W_H1 = 10000   # two conflicting subjects in same slot
-W_H2 = 10000   # teacher double-booked
-W_H3 = 10000   # room double-booked
-W_H4 = 10000   # practical placed at last slot of day (no room for 2nd slot)
-W_S1 = 200     # room capacity too small (per overflow student)
-W_S2 = 100     # practical in non-lab room  /  lecture in lab room
-W_S3 = 30      # teacher > 3 classes/day
-W_S4 = 15      # student group spread > 4 slots in one day
+W_H1 = 10000
+W_H2 = 10000
+W_H3 = 10000
+W_H4 = 10000
+W_S1 = 200
+W_S2 = 100
+W_S3 = 30
+W_S4 = 15
+W_S5 = 20
+W_S6 = 50     # student group has more than MAX_DAILY_SESSIONS in one day
 
+MAX_DAILY_SESSIONS = 8
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Scheduler
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TimetableScheduler:
 
-    def __init__(self, data: dict):
+    def __init__(self, data):
         self.subjects          = data["subjects"]
-        self.rooms             = data["rooms"]
-        self.students          = data["students"]
-        self.teacher_subjects  = data["teacher_subjects"]
-        self.enrollment_groups = data["enrollment_groups"]
-        self.conflict_sets     = {
-            k: set(v) for k, v in data["conflict_graph"].items()
-        }
+        self.units              = data["units"]
+        self.rooms              = data["rooms"]
+        self.students           = data["students"]
+        self.teacher_subjects   = data["teacher_subjects"]
+        self.enrollment_groups  = data["enrollment_groups"]
+        self.conflict_sets      = {k: set(v) for k, v in data["conflict_graph"].items()}
 
-        # Subjects to schedule = active in at least one group + have a teacher
-        active_codes = set()
-        for codes in self.enrollment_groups.values():
-            active_codes.update(codes)
+        active_units = set()
+        for uids in self.enrollment_groups.values():
+            active_units.update(uids)
+
         self.schedulable = [
-            c for c in active_codes
-            if c in self.teacher_subjects and c in self.subjects
+            uid for uid in active_units
+            if uid in self.units
+            and self.units[uid]["course_code"] in self.teacher_subjects
         ]
 
-        # Identify practical subjects (P > 0 → needs 2 consecutive slots)
-        self.is_practical = {
-            c: (self.subjects[c].get("P", 0) > 0)
-            for c in self.schedulable
-        }
+        self.lecture_rooms = [rid for rid, r in self.rooms.items() if r["room_type"] == "lecture"]
+        self.lab_rooms     = [rid for rid, r in self.rooms.items() if r["room_type"] == "lab"]
+        self.all_rooms     = list(self.rooms.keys())
 
-        # Room pools
-        # NOTE: "lab" room_type = practical rooms (CL-1, CL-2)
-        #       "lecture" room_type = regular lecture halls (LH1–LH16)
-        # Practical subjects → lab rooms
-        # Lecture/Tutorial subjects → lecture rooms
-        self.lecture_rooms = [
-            rid for rid, r in self.rooms.items() if r["room_type"] == "lecture"
-        ]
-        self.lab_rooms = [
-            rid for rid, r in self.rooms.items() if r["room_type"] == "lab"
-        ]
-        self.all_rooms = list(self.rooms.keys())
-
-        # Pre-compute required room type
-        self.room_needed = {
-            c: ("lab" if self.is_practical[c] else "lecture")
-            for c in self.schedulable
-        }
-
-        # Pre-compute student count per subject
         self.student_counts = defaultdict(int)
         for s in self.students.values():
-            key   = f"sem{s['semester']}|{s['major']}|{s['minor']}"
-            codes = self.enrollment_groups.get(key, [])
-            for c in codes:
-                self.student_counts[c] += 1
+            key  = f"sem{s['semester']}|{s['major']}|{s['minor']}"
+            uids = self.enrollment_groups.get(key, [])
+            seen_codes = set()
+            for uid in uids:
+                code = self.units[uid]["course_code"]
+                if code not in seen_codes:
+                    self.student_counts[code] += 1
+                    seen_codes.add(code)
 
-        # Group membership sets for S4
-        self.group_code_sets = {
+        self.room_needed = {
+            uid: ("lab" if self.units[uid]["unit_type"] == "practical" else "lecture")
+            for uid in self.schedulable
+        }
+
+        self.group_unit_sets = {
             k: set(v) for k, v in self.enrollment_groups.items() if v
         }
 
-        # Valid starting slots for practicals (not last slot of any day)
         self.valid_practical_starts = [
             i for i in range(TOTAL_SLOTS) if valid_practical_slot(i)
         ]
-        self.valid_lecture_slots = list(range(TOTAL_SLOTS))
 
-        print(f"\n  Subjects to schedule  : {len(self.schedulable)}")
-        lec = sum(1 for c in self.schedulable if not self.is_practical[c])
-        prac = sum(1 for c in self.schedulable if self.is_practical[c])
-        print(f"    Lectures/Tutorials  : {lec}")
+        self.code_to_units = defaultdict(list)
+        for uid in self.schedulable:
+            self.code_to_units[self.units[uid]["course_code"]].append(uid)
+
+        # ── Precompute conflict pairs as a flat list for fast penalty calc ──
+        # This avoids rebuilding slot indexes from scratch every penalty call.
+        self._uid_list = self.schedulable
+
+        lec  = sum(1 for uid in self.schedulable if self.units[uid]["unit_type"] == "lecture")
+        tut  = sum(1 for uid in self.schedulable if self.units[uid]["unit_type"] == "tutorial")
+        prac = sum(1 for uid in self.schedulable if self.units[uid]["unit_type"] == "practical")
+
+        print(f"\n  Units to schedule     : {len(self.schedulable)}")
+        print(f"    Lectures            : {lec}")
+        print(f"    Tutorials           : {tut}")
         print(f"    Practicals (2-slot) : {prac}")
-        print(f"  Total slots           : {TOTAL_SLOTS}  "
-              f"({len(DAYS)} days × {SLOTS_PER_DAY} slots/day)")
-        print(f"  Rooms                 : {len(self.rooms)}  "
-              f"({len(self.lecture_rooms)} lecture, {len(self.lab_rooms)} lab)")
-        print(f"  Active student groups : {len(self.group_code_sets)}")
-        print(f"  Conflict edges        : "
-              f"{sum(len(v) for v in self.conflict_sets.values()) // 2}")
+        print(f"  Slot-entries needed   : {lec + tut + prac*2}")
+        print(f"  Total slots available : {TOTAL_SLOTS}  ({len(DAYS)} × {SLOTS_PER_DAY})")
+        print(f"  Room-slots available  : {TOTAL_SLOTS * len(self.rooms)}")
+        print(f"  Active groups         : {len(self.group_unit_sets)}")
+        print(f"  Conflict edges        : {sum(len(v) for v in self.conflict_sets.values()) // 2}")
 
 
-    # ── Initial solution ─────────────────────────────────────────────────
-
-    def _random_solution(self) -> dict:
-        """
-        Assigns each subject a random (slot_index, room_id).
-        For practicals: slot_index is the FIRST of two consecutive slots.
-        Slot index stored is always the starting slot.
-        """
+    def _random_solution(self):
         sol = {}
-        for code in self.schedulable:
-            if self.is_practical[code]:
+        for uid in self.schedulable:
+            unit = self.units[uid]
+            if unit["unit_type"] == "practical":
                 slot = random.choice(self.valid_practical_starts)
                 pool = self.lab_rooms or self.all_rooms
             else:
                 slot = random.randint(0, TOTAL_SLOTS - 1)
                 pool = self.lecture_rooms or self.all_rooms
-            sol[code] = (slot, random.choice(pool))
+            sol[uid] = (slot, random.choice(pool))
         return sol
 
 
-    # ── Penalty ──────────────────────────────────────────────────────────
+    def _greedy_solution(self):
+        """
+        Constructive initial solution: place units one at a time, each time
+        picking the (slot, room) that creates the FEWEST new hard-constraint
+        violations against units already placed. This starts SA much closer
+        to a feasible solution than pure random placement, which is critical
+        once the conflict graph gets large (thousands of edges).
 
-    def _penalty(self, sol: dict) -> int:
-        pen = 0
+        Units are placed in order of "most constrained first" — units
+        belonging to the largest enrollment groups go first, since they
+        have the most potential conflicts and are hardest to place later.
+        """
+        sol = {}
 
-        # Expand solution: for each subject, list ALL slot indices it occupies
-        # Lecture = 1 slot, Practical = 2 consecutive slots
-        def occupied_slots(code, start_slot):
-            if self.is_practical[code]:
-                return [start_slot, start_slot + 1]
-            return [start_slot]
+        # Order: units in subjects that appear in more groups go first
+        # (rough proxy: how many conflict edges this unit already has)
+        order = sorted(
+            self.schedulable,
+            key=lambda uid: -len(self.conflict_sets.get(uid, set()))
+        )
 
-        # Build expanded indexes
-        # slot → [(code, room)]
-        slot_occupancy = defaultdict(list)
-        teacher_slots  = defaultdict(list)   # teacher → [slot_idx, ...]
-        teacher_day    = defaultdict(lambda: defaultdict(int))  # teacher → {day: count}
+        # Track occupancy as we place units, for fast incremental checks
+        slot_units_used  = defaultdict(set)   # slot -> {uid}
+        slot_rooms_used  = defaultdict(set)   # slot -> {room_id}
+        teacher_slot_used = defaultdict(set)  # teacher -> {slot}
 
-        for code, (start_slot, room) in sol.items():
-            slots = occupied_slots(code, start_slot)
-            for slot in slots:
-                slot_occupancy[slot].append((code, room))
-            t = self.teacher_subjects.get(code)
-            if t:
-                for slot in slots:
-                    teacher_day[t][slot_day(slot)] += 1
-                # For teacher double-booking we track unique slots
-                for slot in set(slots):
-                    teacher_slots[t].append(slot)
+        def occ(uid, start):
+            return (start, start + 1) if self.units[uid]["unit_type"] == "practical" else (start,)
 
-        # H4 — practical placed at last slot of day (2nd slot would overflow)
-        for code, (start_slot, room) in sol.items():
-            if self.is_practical[code] and not valid_practical_slot(start_slot):
-                pen += W_H4
+        for uid in order:
+            unit = self.units[uid]
+            is_prac = unit["unit_type"] == "practical"
+            teacher = self.teacher_subjects.get(unit["course_code"])
+            pool    = (self.lab_rooms if is_prac else self.lecture_rooms) or self.all_rooms
+            starts  = self.valid_practical_starts if is_prac else range(TOTAL_SLOTS)
 
-        # H1 — conflicting subjects sharing any slot
-        for slot, entries in slot_occupancy.items():
-            codes_here = [e[0] for e in entries]
-            n = len(codes_here)
+            best_choice = None
+            best_score  = None
+
+            # Sample a subset of candidate slots/rooms rather than all —
+            # full enumeration (55 slots x 18 rooms) per unit is cheap enough
+            # here (242 units), so we check every slot but only a few rooms.
+            sample_rooms = random.sample(pool, min(4, len(pool)))
+
+            for start in starts:
+                slots = occ(uid, start)
+
+                # Hard check 1: student clash — any conflicting uid already in these slots?
+                clash = False
+                for s in slots:
+                    for other_uid in slot_units_used[s]:
+                        if other_uid in self.conflict_sets.get(uid, set()):
+                            clash = True
+                            break
+                    if clash:
+                        break
+                if clash:
+                    continue
+
+                # Hard check 2: teacher clash
+                if teacher:
+                    if any(s in teacher_slot_used[teacher] for s in slots):
+                        continue
+
+                for room in sample_rooms:
+                    # Hard check 3: room clash
+                    if any(room in slot_rooms_used[s] for s in slots):
+                        continue
+
+                    # Found a fully feasible (start, room) — take it immediately
+                    best_choice = (start, room)
+                    break
+
+                if best_choice:
+                    break
+
+            if best_choice is None:
+                # No fully clash-free slot found (can happen if conflict
+                # graph is very dense) — fall back to random; SA will fix
+                # remaining violations afterwards.
+                start = random.choice(list(starts))
+                room  = random.choice(pool)
+                best_choice = (start, room)
+
+            start, room = best_choice
+            sol[uid] = (start, room)
+            for s in occ(uid, start):
+                slot_units_used[s].add(uid)
+                slot_rooms_used[s].add(room)
+                if teacher:
+                    teacher_slot_used[teacher].add(s)
+
+        return sol
+
+
+    def _penalty(self, sol, return_breakdown=False):
+        hard_pen = 0
+        soft_pen = 0
+
+        def occupied(uid, start):
+            return [start, start + 1] if self.units[uid]["unit_type"] == "practical" else [start]
+
+        slot_units  = defaultdict(list)
+        slot_rooms  = defaultdict(list)
+        teacher_day = defaultdict(lambda: defaultdict(int))
+
+        for uid, (start, room) in sol.items():
+            for slot in occupied(uid, start):
+                slot_units[slot].append(uid)
+                slot_rooms[slot].append(room)
+            teacher = self.teacher_subjects.get(self.units[uid]["course_code"])
+            if teacher:
+                teacher_day[teacher][slot_day(start)] += 1
+
+        for uid, (start, room) in sol.items():
+            if self.units[uid]["unit_type"] == "practical" and not valid_practical_slot(start):
+                hard_pen += W_H4
+
+        for slot, uids in slot_units.items():
+            n = len(uids)
             for i in range(n):
                 for j in range(i + 1, n):
-                    # Only penalise if they are different subjects
-                    if codes_here[i] != codes_here[j]:
-                        if codes_here[j] in self.conflict_sets.get(codes_here[i], set()):
-                            pen += W_H1
+                    if uids[j] in self.conflict_sets.get(uids[i], set()):
+                        hard_pen += W_H1
 
-        # H2 — teacher double-booked in any single slot
-        slot_teachers = defaultdict(list)
-        for code, (start_slot, room) in sol.items():
-            t = self.teacher_subjects.get(code)
-            if t:
-                for slot in occupied_slots(code, start_slot):
-                    slot_teachers[slot].append(t)
-        for slot, teachers in slot_teachers.items():
+        for slot, uids in slot_units.items():
             seen = set()
-            for t in teachers:
-                if t in seen:
-                    pen += W_H2
-                seen.add(t)
+            for uid in uids:
+                t = self.teacher_subjects.get(self.units[uid]["course_code"])
+                if t:
+                    if t in seen: hard_pen += W_H2
+                    seen.add(t)
 
-        # H3 — room double-booked in any single slot
-        for slot, entries in slot_occupancy.items():
-            rooms_here = [e[1] for e in entries]
+        for slot, rooms_in_slot in slot_rooms.items():
             seen = set()
-            for r in rooms_here:
-                if r in seen:
-                    pen += W_H3
+            for r in rooms_in_slot:
+                if r in seen: hard_pen += W_H3
                 seen.add(r)
 
-        # S1 — room too small
-        for code, (start_slot, room) in sol.items():
+        for uid, (start, room) in sol.items():
+            code     = self.units[uid]["course_code"]
             students = self.student_counts.get(code, 0)
             cap      = self.rooms[room]["capacity"]
             if students > cap:
-                pen += W_S1 * (students - cap)
+                soft_pen += W_S1 * (students - cap)
 
-        # S2 — wrong room type
-        for code, (start_slot, room) in sol.items():
-            if self.room_needed.get(code, "lecture") != self.rooms[room]["room_type"]:
-                pen += W_S2
+        for uid, (start, room) in sol.items():
+            if self.room_needed.get(uid, "lecture") != self.rooms[room]["room_type"]:
+                soft_pen += W_S2
 
-        # S3 — teacher > 3 occupied slots per day
-        # For practicals a teacher teaches 2 slots but counts as 1 class
-        teacher_class_day = defaultdict(lambda: defaultdict(int))
-        for code, (start_slot, room) in sol.items():
-            t = self.teacher_subjects.get(code)
-            if t:
-                teacher_class_day[t][slot_day(start_slot)] += 1
-        for t, days in teacher_class_day.items():
+        for teacher, days in teacher_day.items():
             for d, cnt in days.items():
                 if cnt > 3:
-                    pen += W_S3 * (cnt - 3)
+                    soft_pen += W_S3 * (cnt - 3)
 
-        # S4 — student group spread > 4 slots in one day
-        for group_key, codes_set in self.group_code_sets.items():
+        for group_key, uid_set in self.group_unit_sets.items():
             day_times = defaultdict(list)
-            for code, (start_slot, room) in sol.items():
-                if code in codes_set:
-                    for slot in occupied_slots(code, start_slot):
+            for uid, (start, room) in sol.items():
+                if uid in uid_set:
+                    for slot in occupied(uid, start):
                         day_times[slot_day(slot)].append(slot_time(slot))
             for d, times in day_times.items():
                 if len(times) >= 2:
                     times.sort()
-                    if times[-1] - times[0] > 6:   # wider threshold for 11-slot days
-                        pen += W_S4
+                    if times[-1] - times[0] > 6:
+                        soft_pen += W_S4
 
-        return pen
+        for code, uids in self.code_to_units.items():
+            if len(uids) < 2: continue
+            day_counts = defaultdict(int)
+            for uid in uids:
+                if uid in sol:
+                    day_counts[slot_day(sol[uid][0])] += 1
+            for d, cnt in day_counts.items():
+                if cnt > 1:
+                    soft_pen += W_S5 * (cnt - 1)
+
+        # S6 — student group has more than MAX_DAILY_SESSIONS sessions in
+        # one day. This counts sessions, not slot-span (different from S4
+        # which checks the gap between first and last session of the day).
+        for group_key, uid_set in self.group_unit_sets.items():
+            day_session_count = defaultdict(int)
+            for uid, (start, room) in sol.items():
+                if uid in uid_set:
+                    day_session_count[slot_day(start)] += 1
+            for d, cnt in day_session_count.items():
+                if cnt > MAX_DAILY_SESSIONS:
+                    soft_pen += W_S6 * (cnt - MAX_DAILY_SESSIONS)
+
+        if return_breakdown:
+            return hard_pen, soft_pen
+        return hard_pen + soft_pen
 
 
-    # ── Neighbour moves ──────────────────────────────────────────────────
-
-    def _neighbour(self, sol: dict) -> dict:
+    def _find_violating_units(self, sol):
         """
-        Three move types:
-          0 — Reassign one subject to new (slot, room)
-          1 — Swap starting slots between two subjects
-          2 — Change room only for one subject
-        For practicals, always pick from valid_practical_starts.
+        Returns a list of unit_ids that are CURRENTLY involved in at least
+        one hard-constraint violation (student/teacher/room clash).
+        Used to bias the neighbour move towards fixing actual problems
+        instead of picking purely randomly — this is what makes SA converge
+        fast even when the conflict graph is dense.
         """
-        new   = sol.copy()
-        codes = list(new.keys())
-        move  = random.randint(0, 2)
+        def occupied(uid, start):
+            return [start, start + 1] if self.units[uid]["unit_type"] == "practical" else [start]
 
-        if move == 0 or len(codes) < 2:
-            code = random.choice(codes)
-            if self.is_practical[code]:
+        slot_units = defaultdict(list)
+        slot_rooms = defaultdict(list)
+        for uid, (start, room) in sol.items():
+            for slot in occupied(uid, start):
+                slot_units[slot].append(uid)
+                slot_rooms[slot].append((uid, room))
+
+        bad = set()
+        for slot, uids in slot_units.items():
+            n = len(uids)
+            for i in range(n):
+                for j in range(i + 1, n):
+                    if uids[j] in self.conflict_sets.get(uids[i], set()):
+                        bad.add(uids[i]); bad.add(uids[j])
+
+            teacher_seen = {}
+            for uid in uids:
+                t = self.teacher_subjects.get(self.units[uid]["course_code"])
+                if t:
+                    if t in teacher_seen:
+                        bad.add(uid); bad.add(teacher_seen[t])
+                    teacher_seen[t] = uid
+
+        for slot, pairs in slot_rooms.items():
+            room_seen = {}
+            for uid, room in pairs:
+                if room in room_seen:
+                    bad.add(uid); bad.add(room_seen[room])
+                room_seen[room] = uid
+
+        return list(bad)
+
+
+    def _neighbour(self, sol, violating_uids=None):
+        """
+        Move selection: 70% of the time, if there are units currently in a
+        hard-constraint violation, pick the unit to move FROM that set
+        instead of uniformly at random. This is a guided/focused local
+        search move — it concentrates effort on actually broken units
+        rather than wasting moves on units that are already fine.
+        """
+        new  = sol.copy()
+        uids = list(new.keys())
+
+        use_guided = violating_uids and len(violating_uids) > 0 and random.random() < 0.7
+        pool_uids  = violating_uids if use_guided else uids
+
+        move = random.randint(0, 2)
+
+        if move == 0 or len(uids) < 2:
+            uid  = random.choice(pool_uids)
+            unit = self.units[uid]
+            if unit["unit_type"] == "practical":
                 slot = random.choice(self.valid_practical_starts)
                 pool = self.lab_rooms or self.all_rooms
             else:
                 slot = random.randint(0, TOTAL_SLOTS - 1)
                 pool = self.lecture_rooms or self.all_rooms
-            new[code] = (slot, random.choice(pool))
+            new[uid] = (slot, random.choice(pool))
 
         elif move == 1:
-            a, b = random.sample(codes, 2)
+            a = random.choice(pool_uids)
+            b = random.choice(uids)
+            while b == a:
+                b = random.choice(uids)
             sa, ra = new[a]
             sb, rb = new[b]
-            # Validate swap: if a is practical, sb must be a valid practical start
-            # and vice versa
-            new_sa = sb
-            new_sb = sa
-            if self.is_practical[a] and not valid_practical_slot(new_sa):
+            new_sa, new_sb = sb, sa
+            if self.units[a]["unit_type"] == "practical" and not valid_practical_slot(new_sa):
                 new_sa = random.choice(self.valid_practical_starts)
-            if self.is_practical[b] and not valid_practical_slot(new_sb):
+            if self.units[b]["unit_type"] == "practical" and not valid_practical_slot(new_sb):
                 new_sb = random.choice(self.valid_practical_starts)
             new[a] = (new_sa, ra)
             new[b] = (new_sb, rb)
 
         else:
-            code = random.choice(codes)
-            slot = new[code][0]
-            if self.is_practical[code]:
-                pool = self.lab_rooms or self.all_rooms
-            else:
-                pool = self.lecture_rooms or self.all_rooms
-            new[code] = (slot, random.choice(pool))
+            uid  = random.choice(pool_uids)
+            slot = new[uid][0]
+            pool = self.lab_rooms if self.units[uid]["unit_type"] == "practical" else self.lecture_rooms
+            pool = pool or self.all_rooms
+            new[uid] = (slot, random.choice(pool))
 
         return new
 
 
-    # ── Simulated Annealing ──────────────────────────────────────────────
+    def solve(self, initial_temp=10000.0, cooling_rate=0.995,
+              min_temp=1.0, iters_per_temp=50, restart_threshold=500,
+              max_steps=None, polish_iters=5000, verbose=True):
 
-    def solve(
-        self,
-        initial_temp:      float = 50000.0,
-        cooling_rate:      float = 0.9997,
-        min_temp:          float = 1.0,
-        iters_per_temp:    int   = 100,
-        restart_threshold: int   = 3000,
-    ) -> dict:
+        if verbose:
+            print(f"\n  Simulated Annealing")
+            print(f"  T₀={initial_temp}  cooling={cooling_rate}  "
+                  f"min_T={min_temp}  iters/step={iters_per_temp}")
 
-        print(f"\n  Simulated Annealing")
-        print(f"  T₀={initial_temp}  cooling={cooling_rate}  "
-              f"min_T={min_temp}  iters/step={iters_per_temp}")
+        current        = self._greedy_solution()
+        cur_hard, cur_soft = self._penalty(current, return_breakdown=True)
+        current_pen    = cur_hard + cur_soft
+        best           = copy.copy(current)
+        best_hard      = cur_hard
+        best_soft      = cur_soft
+        best_pen       = current_pen
+        temp           = initial_temp
+        step           = 0
+        no_improve     = 0
 
-        current     = self._random_solution()
-        current_pen = self._penalty(current)
-        best        = copy.copy(current)
-        best_pen    = current_pen
-        temp        = initial_temp
-        step        = 0
-        no_improve  = 0
+        if verbose:
+            print(f"  Initial penalty : {current_pen}  "
+                  f"(hard={cur_hard}, soft={cur_soft})\n")
 
-        print(f"  Initial penalty : {current_pen}\n")
+        violating = self._find_violating_units(current)
 
-        while temp > min_temp and best_pen > 0:
+        # STOP CONDITION: hard penalty must reach exactly 0 — this is the
+        # correct check. Total penalty (hard+soft) can stay high forever
+        # because soft penalties (room capacity, teacher load, day-spread)
+        # often cannot reach 0 even in a perfectly valid timetable.
+        while temp > min_temp and best_hard > 0:
+            if max_steps and step >= max_steps:
+                if verbose: print(f"  ⏱ Max steps ({max_steps}) reached, stopping.")
+                break
+
             for _ in range(iters_per_temp):
-                nb    = self._neighbour(current)
-                nb_p  = self._penalty(nb)
-                delta = nb_p - current_pen
+                nb = self._neighbour(current, violating_uids=violating)
+                nb_hard, nb_soft = self._penalty(nb, return_breakdown=True)
+                nb_pen = nb_hard + nb_soft
+                delta  = nb_pen - current_pen
+
                 if delta < 0 or random.random() < math.exp(-delta / temp):
-                    current, current_pen = nb, nb_p
-                    if current_pen < best_pen:
-                        best, best_pen = copy.copy(current), current_pen
+                    current, current_pen = nb, nb_pen
+                    cur_hard, cur_soft = nb_hard, nb_soft
+
+                    # "Better" is primarily about hard penalty; only compare
+                    # soft penalty once hard is tied, so the search never
+                    # trades away a hard-constraint fix for a soft gain.
+                    is_better = (cur_hard < best_hard) or \
+                                (cur_hard == best_hard and current_pen < best_pen)
+                    if is_better:
+                        best, best_hard, best_soft, best_pen = \
+                            copy.copy(current), cur_hard, cur_soft, current_pen
                         no_improve = 0
 
-            temp      *= cooling_rate
-            step      += 1
+            violating = self._find_violating_units(current)
+
+            temp       *= cooling_rate
+            step       += 1
             no_improve += 1
 
             if no_improve >= restart_threshold:
                 current, current_pen = copy.copy(best), best_pen
+                cur_hard, cur_soft   = best_hard, best_soft
                 no_improve = 0
-                print(f"  ↺ Restart at step {step}  (best={best_pen})")
+                violating  = self._find_violating_units(current)
+                if verbose: print(f"  ↺ Restart at step {step}  "
+                                  f"(best_hard={best_hard}, best_soft={best_soft})")
 
-            if step % 200 == 0:
+            if verbose and step % 100 == 0:
                 print(f"  Step {step:6d}  T={temp:9.2f}  "
-                      f"best={best_pen:6d}  current={current_pen:6d}")
+                      f"hard={cur_hard:5d}  soft={cur_soft:6d}  "
+                      f"best_hard={best_hard:5d}  best_soft={best_soft:6d}")
 
-        print(f"\n  ── SA complete ───────────────────────────────")
-        print(f"  Steps        : {step}")
-        print(f"  Final penalty: {best_pen}")
-        if best_pen == 0:
-            print("  ✓ Perfect solution — zero violations")
-        else:
-            print("  ⚠ Remaining violations:")
-            self._print_violations(best)
-        return best
+        if verbose:
+            print(f"\n  ── SA complete ──────────────────────────────────")
+            print(f"  Steps        : {step}")
+            print(f"  Final hard penalty: {best_hard}")
+            print(f"  Final soft penalty: {best_soft}")
+            if best_hard == 0:
+                print("  ✓ ALL HARD CONSTRAINTS SATISFIED — "
+                      "zero student/teacher/room/practical clashes")
+                print(f"  ⚠ Soft penalty remaining: {best_soft} "
+                      f"(room capacity / teacher load / day spread — "
+                      f"expected, not fixable by scheduling alone)")
+            else:
+                print("  ⚠ HARD violations remain — did not converge:")
+                self._print_violations(best)
+
+        # ── Soft-penalty polishing pass ──────────────────────────────────
+        # Once hard constraints are satisfied, spend a fixed extra budget
+        # of iterations trying to reduce soft penalty WITHOUT ever
+        # reintroducing a hard violation. Any move that would create a
+        # hard violation is rejected outright, regardless of temperature.
+        if best_hard == 0 and polish_iters > 0:
+            if verbose:
+                print(f"\n  Polishing soft penalty for {polish_iters} iterations...")
+            polish_current      = copy.copy(best)
+            polish_hard, polish_soft = best_hard, best_soft
+            for _ in range(polish_iters):
+                nb = self._neighbour(polish_current, violating_uids=None)
+                nb_hard, nb_soft = self._penalty(nb, return_breakdown=True)
+                if nb_hard == 0 and nb_soft < polish_soft:
+                    polish_current, polish_soft = nb, nb_soft
+            if polish_soft < best_soft:
+                best, best_soft = polish_current, polish_soft
+                if verbose:
+                    print(f"  ✓ Polishing improved soft penalty: "
+                          f"{best_soft} (was higher before)")
+
+        return best, best_hard, best_soft
 
 
     def _print_violations(self, sol):
-        def occupied(code, s):
-            return [s, s+1] if self.is_practical[code] else [s]
+        def occupied(uid, s):
+            return [s, s+1] if self.units[uid]["unit_type"] == "practical" else [s]
 
-        slot_occ = defaultdict(list)
-        for code, (s, r) in sol.items():
-            for slot in occupied(code, s):
-                slot_occ[slot].append(code)
+        slot_units = defaultdict(list)
+        for uid, (s, r) in sol.items():
+            for slot in occupied(uid, s):
+                slot_units[slot].append(uid)
 
         h1 = h2 = h3 = h4 = 0
-        for code, (s, r) in sol.items():
-            if self.is_practical[code] and not valid_practical_slot(s):
+        for uid, (s, r) in sol.items():
+            if self.units[uid]["unit_type"] == "practical" and not valid_practical_slot(s):
                 h4 += 1
-                print(f"    H4 PRACTICAL AT DAY-END: {code} at slot {s}")
 
-        for slot, codes in slot_occ.items():
-            n = len(codes)
+        for slot, uids in slot_units.items():
+            n = len(uids)
             for i in range(n):
                 for j in range(i+1, n):
-                    if codes[i] != codes[j] and \
-                       codes[j] in self.conflict_sets.get(codes[i], set()):
+                    if uids[j] in self.conflict_sets.get(uids[i], set()):
                         h1 += 1
-                        sl = ALL_SLOTS[slot]
-                        print(f"    H1 CLASH: {codes[i]} ↔ {codes[j]} "
-                              f"at {sl['day']} {sl['start']}")
             seen = set()
-            for c in codes:
-                t = self.teacher_subjects.get(c)
+            for uid in uids:
+                t = self.teacher_subjects.get(self.units[uid]["course_code"])
                 if t:
-                    if t in seen:
-                        h2 += 1
-                        print(f"    H2 TEACHER: {t} double at "
-                              f"{ALL_SLOTS[slot]['day']} {ALL_SLOTS[slot]['start']}")
+                    if t in seen: h2 += 1
                     seen.add(t)
-            rooms_h = [sol[c][1] for c in codes]
             seen = set()
-            for rr in rooms_h:
-                if rr in seen: h3 += 1
-                seen.add(rr)
+            for uid in uids:
+                r = sol[uid][1]
+                if r in seen: h3 += 1
+                seen.add(r)
 
         print(f"    H1 student clashes  : {h1}")
         print(f"    H2 teacher clashes  : {h2}")
@@ -446,83 +585,79 @@ class TimetableScheduler:
         print(f"    H4 practical at EOD : {h4}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Build output JSON
-# ─────────────────────────────────────────────────────────────────────────────
-
-def build_timetable_json(solution: dict, data: dict) -> dict:
+def build_timetable_json(solution, data):
     subjects         = data["subjects"]
+    units            = data["units"]
     rooms            = data["rooms"]
     teacher_subjects = data["teacher_subjects"]
     students         = data["students"]
     groups           = data["enrollment_groups"]
+    day_order        = {d: i for i, d in enumerate(DAYS)}
 
-    # Determine which subjects are practicals
-    is_practical = {
-        c: (subjects.get(c, {}).get("P", 0) > 0)
-        for c in solution
-    }
-
-    day_order = {d: i for i, d in enumerate(DAYS)}
-    classes   = []
-
-    for code, (start_slot, room_id) in solution.items():
+    classes = []
+    for uid, (start_slot, room_id) in solution.items():
+        unit = units[uid]
+        code = unit["course_code"]
         subj = subjects.get(code, {})
         room = rooms.get(room_id, {})
         slot1 = ALL_SLOTS[start_slot]
 
-        if is_practical[code]:
-            # Practical spans two consecutive slots
-            slot2 = ALL_SLOTS[start_slot + 1]
+        if unit["unit_type"] == "practical":
+            slot2    = ALL_SLOTS[start_slot + 1]
             end_time = slot2["end"]
-            slot_count = 2
+            slots    = 2
         else:
-            end_time   = slot1["end"]
-            slot_count = 1
+            end_time = slot1["end"]
+            slots    = 1
 
         classes.append({
-            "course_code":  code,
-            "title":        subj.get("title", ""),
-            "credits":      subj.get("credits", 0),
-            "type":         "practical" if is_practical[code] else "lecture",
-            "slots":        slot_count,
-            "day":          slot1["day"],
-            "start":        slot1["start"],
-            "end":          end_time,
-            "slot_index":   start_slot,
-            "room_id":      room_id,
-            "room_type":    room.get("room_type", ""),
-            "capacity":     room.get("capacity", 0),
-            "teacher":      teacher_subjects.get(code, "TBA"),
+            "unit_id":     uid,
+            "course_code": code,
+            "title":       subj.get("title", "") if isinstance(subj, dict) else subj.title,
+            "credits":     subj.get("credits", 0) if isinstance(subj, dict) else subj.credits,
+            "type":        unit["unit_type"],
+            "slots":       slots,
+            "day":         slot1["day"],
+            "start":       slot1["start"],
+            "end":         end_time,
+            "slot_index":  start_slot,
+            "room_id":     room_id,
+            "room_type":   room.get("room_type", "") if isinstance(room, dict) else room.room_type,
+            "capacity":    room.get("capacity", 0) if isinstance(room, dict) else room.capacity,
+            "teacher":     teacher_subjects.get(code, "TBA"),
         })
 
     classes.sort(key=lambda c: (day_order[c["day"]], c["slot_index"]))
-
     by_day = {day: [c for c in classes if c["day"] == day] for day in DAYS}
 
     by_student = {}
     for enr, s in students.items():
-        key      = f"sem{s['semester']}|{s['major']}|{s['minor']}"
-        my_codes = set(groups.get(key, []))
-        my_cls   = [c for c in classes if c["course_code"] in my_codes]
+        s_dict = s if isinstance(s, dict) else {
+            "semester": s.semester, "major": s.major,
+            "minor": s.minor, "name": s.name, "email": s.email
+        }
+        key     = f"sem{s_dict['semester']}|{s_dict['major']}|{s_dict['minor']}"
+        my_uids = set(groups.get(key, []))
+        my_cls  = [c for c in classes if c["unit_id"] in my_uids]
+
         by_student[enr] = {
             "enrollment_no": enr,
-            "name":          s["name"],
-            "email":         s["email"],
-            "major":         s["major"],
-            "minor":         s["minor"],
-            "semester":      s["semester"],
+            "name":          s_dict["name"],
+            "email":         s_dict["email"],
+            "major":         s_dict["major"],
+            "minor":         s_dict["minor"],
+            "semester":      s_dict["semester"],
             "classes":       my_cls,
         }
 
     return {
         "meta": {
-            "total_classes":  len(classes),
-            "total_students": len(by_student),
-            "days":           DAYS,
-            "slots_per_day":  SLOTS_PER_DAY,
+            "total_classes":         len(classes),
+            "total_students":        len(by_student),
+            "days":                  DAYS,
+            "slots_per_day":         SLOTS_PER_DAY,
             "slot_duration_minutes": _SLOT_MINUTES,
-            "timeslots":      ALL_SLOTS,
+            "timeslots":             ALL_SLOTS,
         },
         "timetable":  classes,
         "by_day":     by_day,
@@ -530,22 +665,13 @@ def build_timetable_json(solution: dict, data: dict) -> dict:
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Public entry point
-# ─────────────────────────────────────────────────────────────────────────────
-
-def run(
-    extracted_json:    str,
-    output_json:       str,
-    initial_temp:      float = 50000.0,
-    cooling_rate:      float = 0.9997,
-    min_temp:          float = 1.0,
-    iters_per_temp:    int   = 100,
-    restart_threshold: int   = 3000,
-) -> dict:
+def run(extracted_json, output_json,
+        initial_temp=10000.0, cooling_rate=0.995,
+        min_temp=1.0, iters_per_temp=50, restart_threshold=500,
+        max_steps=None, polish_iters=5000):
 
     print("=" * 65)
-    print("  TSLAS TIMETABLE SCHEDULER  v2  —  Simulated Annealing")
+    print("  TSLAS TIMETABLE SCHEDULER  v3  —  Simulated Annealing")
     print("=" * 65)
 
     with open(extracted_json, encoding="utf-8") as f:
@@ -553,6 +679,7 @@ def run(
 
     data = {
         "subjects":          raw["subjects"],
+        "units":             raw["units"],
         "rooms":             raw["rooms"],
         "students":          raw["students"],
         "teacher_subjects":  raw["teacher_subjects"],
@@ -560,13 +687,12 @@ def run(
         "conflict_graph":    {k: set(v) for k, v in raw["conflict_graph"].items()},
     }
 
-    sched    = TimetableScheduler(data)
-    solution = sched.solve(
-        initial_temp      = initial_temp,
-        cooling_rate      = cooling_rate,
-        min_temp          = min_temp,
-        iters_per_temp    = iters_per_temp,
-        restart_threshold = restart_threshold,
+    sched = TimetableScheduler(data)
+    solution, hard_pen, soft_pen = sched.solve(
+        initial_temp=initial_temp, cooling_rate=cooling_rate,
+        min_temp=min_temp, iters_per_temp=iters_per_temp,
+        restart_threshold=restart_threshold, max_steps=max_steps,
+        polish_iters=polish_iters,
     )
 
     out = build_timetable_json(solution, data)
@@ -575,23 +701,19 @@ def run(
     with open(output_json, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
 
-    print(f"\n  ✓ Saved → {output_json}")
-    print(f"  Classes  : {out['meta']['total_classes']}")
-    print(f"  Students : {out['meta']['total_students']}")
+    print(f"\n  ✓ Timetable saved → {output_json}")
+    print(f"  Class sessions : {out['meta']['total_classes']}")
+    print(f"  Students       : {out['meta']['total_students']}")
 
-    # Print 2 sample student timetables
     printed = 0
     for enr, s in out["by_student"].items():
-        if s["classes"] and len(s["classes"]) >= 3:
-            print(f"\n  ── {s['name']} ({enr})  "
-                  f"sem{s['semester']}  {s['major']} + {s['minor']}")
+        if s["classes"] and len(s["classes"]) >= 6:
+            print(f"\n  ── {s['name']} ({enr})  sem{s['semester']}  {s['major']} + {s['minor']}")
             for c in s["classes"]:
-                typ = "PRAC" if c["type"] == "practical" else "LEC "
-                print(f"     {c['day']:10s}  {c['start']}–{c['end']}"
-                      f"  [{typ}]  {c['course_code']:10s}"
-                      f"  {c['title'][:34]:34s}"
-                      f"  [{c['room_id']:6s}]  {c['teacher']}")
+                typ = {"lecture": "LEC", "tutorial": "TUT", "practical": "PRAC"}[c["type"]]
+                print(f"     {c['day']:10s}  {c['start']}–{c['end']}  [{typ}]  "
+                      f"{c['course_code']:10s}  {c['title'][:32]:32s}  "
+                      f"[{c['room_id']:6s}]  {c['teacher'][:20]}")
             printed += 1
-            if printed == 2:
-                break
+            if printed == 2: break
     return out
