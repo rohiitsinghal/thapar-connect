@@ -217,7 +217,7 @@ function showMessage(text) {
   el.style.display = text ? 'block' : 'none';
 }
 
-function buildEmptyGrid(days, timeslots) {
+function buildEmptyGrid(days, timeslots) {     
   // group timeslots by day, ordered as they appear in meta.timeslots
   const byDay = {};
   days.forEach(d => byDay[d] = []);

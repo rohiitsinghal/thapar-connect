@@ -14,14 +14,19 @@ import os
 from collections import defaultdict
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Timeslots — 08:00 to 17:10, 50-min slots, Mon–Fri
+# Timeslots — 08:00 to 18:50, 50-min slots, Mon–Fri
+#
+# 13 slots/day (was 11): the range was extended by 2 slots at the end of
+# the day. One of those 13 slots — 13:00-13:50 (1:00pm-1:50pm) — is a
+# fixed LUNCH BREAK and is never used for scheduling classes.
 # ─────────────────────────────────────────────────────────────────────────────
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 _SLOT_MINUTES = 50
+_DAY_END_MIN  = 18 * 60 + 50   # 18:50 → last slot ends at 6:50pm
 _TIMES = []
 t = 8 * 60
-while t + _SLOT_MINUTES <= 17 * 60 + 10:
+while t + _SLOT_MINUTES <= _DAY_END_MIN:
     h1, m1 = divmod(t, 60)
     h2, m2 = divmod(t + _SLOT_MINUTES, 60)
     _TIMES.append((f"{h1:02d}:{m1:02d}", f"{h2:02d}:{m2:02d}"))
@@ -30,15 +35,42 @@ while t + _SLOT_MINUTES <= 17 * 60 + 10:
 SLOTS_PER_DAY = len(_TIMES)
 TOTAL_SLOTS   = SLOTS_PER_DAY * len(DAYS)
 
+# Which slot-of-day is the lunch break (13:00-13:50)?
+LUNCH_START = "13:00"
+LUNCH_SLOT_TIME = next(
+    (i for i, (start, _end) in enumerate(_TIMES) if start == LUNCH_START), None
+)
+if LUNCH_SLOT_TIME is None:
+    raise RuntimeError(
+        f"Lunch start time {LUNCH_START} does not align with any timeslot boundary."
+    )
+
 ALL_SLOTS = [
-    {"slot_index": d * SLOTS_PER_DAY + s, "day": day, "start": start, "end": end}
+    {
+        "slot_index": d * SLOTS_PER_DAY + s,
+        "day": day, "start": start, "end": end,
+        "is_lunch": (s == LUNCH_SLOT_TIME),
+    }
     for d, day in enumerate(DAYS)
     for s, (start, end) in enumerate(_TIMES)
 ]
 
 def slot_day(idx):  return idx // SLOTS_PER_DAY
 def slot_time(idx): return idx  % SLOTS_PER_DAY
-def valid_practical_slot(idx): return slot_time(idx) < SLOTS_PER_DAY - 1
+def is_lunch_slot(idx): return slot_time(idx) == LUNCH_SLOT_TIME
+
+def valid_practical_slot(idx):
+    # Must leave room for the 2nd half within the same day, and must not
+    # start on, or span across, the lunch break.
+    if slot_time(idx) >= SLOTS_PER_DAY - 1:
+        return False
+    if is_lunch_slot(idx) or is_lunch_slot(idx + 1):
+        return False
+    return True
+
+# Every non-lunch slot in the week — the only slots lectures/tutorials may
+# ever be placed in.
+SCHEDULABLE_SLOTS = [i for i in range(TOTAL_SLOTS) if not is_lunch_slot(i)]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Penalty weights
@@ -54,6 +86,9 @@ W_S3 = 30
 W_S4 = 15
 W_S5 = 20
 W_S6 = 50     # student group has more than MAX_DAILY_SESSIONS in one day
+W_H5 = 10000  # unit placed on/over the lunch break slot (should never
+              # happen given SCHEDULABLE_SLOTS/valid_practical_slot, but
+              # kept as a defensive hard-constraint check)
 
 MAX_DAILY_SESSIONS = 8
 
@@ -138,7 +173,7 @@ class TimetableScheduler:
                 slot = random.choice(self.valid_practical_starts)
                 pool = self.lab_rooms or self.all_rooms
             else:
-                slot = random.randint(0, TOTAL_SLOTS - 1)
+                slot = random.choice(SCHEDULABLE_SLOTS)
                 pool = self.lecture_rooms or self.all_rooms
             sol[uid] = (slot, random.choice(pool))
         return sol
@@ -178,7 +213,7 @@ class TimetableScheduler:
             is_prac = unit["unit_type"] == "practical"
             teacher = self.teacher_subjects.get(unit["course_code"])
             pool    = (self.lab_rooms if is_prac else self.lecture_rooms) or self.all_rooms
-            starts  = self.valid_practical_starts if is_prac else range(TOTAL_SLOTS)
+            starts  = self.valid_practical_starts if is_prac else SCHEDULABLE_SLOTS
 
             best_choice = None
             best_score  = None
@@ -261,6 +296,11 @@ class TimetableScheduler:
         for uid, (start, room) in sol.items():
             if self.units[uid]["unit_type"] == "practical" and not valid_practical_slot(start):
                 hard_pen += W_H4
+
+        for uid, (start, room) in sol.items():
+            is_prac = self.units[uid]["unit_type"] == "practical"
+            if is_lunch_slot(start) or (is_prac and is_lunch_slot(start + 1)):
+                hard_pen += W_H5
 
         for slot, uids in slot_units.items():
             n = len(uids)
@@ -405,7 +445,7 @@ class TimetableScheduler:
                 slot = random.choice(self.valid_practical_starts)
                 pool = self.lab_rooms or self.all_rooms
             else:
-                slot = random.randint(0, TOTAL_SLOTS - 1)
+                slot = random.choice(SCHEDULABLE_SLOTS)
                 pool = self.lecture_rooms or self.all_rooms
             new[uid] = (slot, random.choice(pool))
 
@@ -556,10 +596,13 @@ class TimetableScheduler:
             for slot in occupied(uid, s):
                 slot_units[slot].append(uid)
 
-        h1 = h2 = h3 = h4 = 0
+        h1 = h2 = h3 = h4 = h5 = 0
         for uid, (s, r) in sol.items():
             if self.units[uid]["unit_type"] == "practical" and not valid_practical_slot(s):
                 h4 += 1
+            is_prac = self.units[uid]["unit_type"] == "practical"
+            if is_lunch_slot(s) or (is_prac and is_lunch_slot(s + 1)):
+                h5 += 1
 
         for slot, uids in slot_units.items():
             n = len(uids)
@@ -583,6 +626,7 @@ class TimetableScheduler:
         print(f"    H2 teacher clashes  : {h2}")
         print(f"    H3 room clashes     : {h3}")
         print(f"    H4 practical at EOD : {h4}")
+        print(f"    H5 lunch violations : {h5}")
 
 
 def build_timetable_json(solution, data):

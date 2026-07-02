@@ -196,9 +196,13 @@ def _load_curriculum_and_teachers(wb):
 
     curriculum       = defaultdict(list)
     subjects         = {}
-    teacher_subjects = {}
+    teacher_subjects_raw = defaultdict(list)   # course_code -> [teacher names], ordered & deduped
     teacher_courses  = defaultdict(set)
     teacher_info     = {}
+
+    def _add_teacher(code, name):
+        if name and name not in teacher_subjects_raw[code]:
+            teacher_subjects_raw[code].append(name)
 
     for r in data_rows:
         program = _canonical(str(r[1]).strip() if r[1] else "")
@@ -239,7 +243,7 @@ def _load_curriculum_and_teachers(wb):
             subjects[code] = Subject(code, title, L, T, P, credits)
 
         if teacher_name and teacher_code:
-            teacher_subjects[code] = teacher_name
+            _add_teacher(code, teacher_name)
             teacher_info[teacher_code] = teacher_name
             teacher_courses[teacher_code].add(code)
 
@@ -250,7 +254,7 @@ def _load_curriculum_and_teachers(wb):
         name = str(r[1]).strip() if r[1] else ""
         tc   = str(r[2]).strip() if r[2] else ""
         if not code or not name: continue
-        teacher_subjects[code] = name
+        _add_teacher(code, name)
         if tc:
             teacher_info[tc] = name
             teacher_courses[tc].add(code)
@@ -262,8 +266,10 @@ def _load_curriculum_and_teachers(wb):
         name = str(r[1]).strip() if r[1] else ""
         tc   = str(r[2]).strip() if r[2] else ""
         if not code or not name or code == "nan" or name == "nan": continue
-        if code not in teacher_subjects:
-            teacher_subjects[code] = name
+        # This sheet is a fallback source — only use it for codes that got
+        # no teacher at all from the more authoritative sheets above.
+        if code not in teacher_subjects_raw:
+            _add_teacher(code, name)
         if tc and tc not in ("nan", ""):
             teacher_info[tc] = name
             teacher_courses[tc].add(code)
@@ -273,11 +279,26 @@ def _load_curriculum_and_teachers(wb):
         for tc, name in teacher_info.items()
     }
 
+    # Collapse each code's teacher list into a single display/scheduling
+    # string, e.g. "Dr. A Sharma & Dr. B Mehta". Downstream code (the SA
+    # scheduler's teacher-clash check, and the JSON "teacher" field shown
+    # in index.html) treats this as one atomic value per subject — which
+    # also means all teachers of a shared-teaching subject correctly get
+    # treated as unavailable at the same time in the scheduler.
+    teacher_subjects = {
+        code: " & ".join(names) for code, names in teacher_subjects_raw.items()
+    }
+
     curriculum = dict(curriculum)
     print(f"    ✓ {len(subjects)} unique subjects | "
           f"{sum(len(v) for v in curriculum.values())} curriculum entries | "
           f"{len(curriculum)} (program, semester) combinations")
     print(f"    ✓ {len(teachers)} teachers | {len(teacher_subjects)} subject→teacher mappings")
+    multi_teacher = {c: n for c, n in teacher_subjects_raw.items() if len(n) > 1}
+    if multi_teacher:
+        print(f"    ℹ  {len(multi_teacher)} subjects have multiple teachers:")
+        for c, names in sorted(multi_teacher.items()):
+            print(f"      - {c}: {' & '.join(names)}")
     return curriculum, subjects, teachers, teacher_subjects
 
 
