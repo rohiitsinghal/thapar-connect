@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Calendar, LayoutDashboard, BookOpen, DoorOpen, Clock, Users, Menu, X, ChevronDown } from "lucide-react";
+import { Calendar, LayoutDashboard, BookOpen, DoorOpen, Clock, Users, Menu, X, ChevronDown, UserRound, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,8 @@ import { clearUserSession, getUserSession } from "@/lib/auth";
 
 const navItems = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { label: "Profile", path: "/profile", icon: UserRound },
+  { label: "Search", path: "/admin", icon: Search },
   { label: "Timetable", path: "/timetable", icon: Calendar },
   { label: "Courses", path: "/courses", icon: BookOpen },
   { label: "Rooms", path: "/rooms", icon: DoorOpen },
@@ -19,15 +21,16 @@ const navItems = [
   { label: "Student Sections", path: "/sections", icon: Users },
 ];
 
-const studentVisiblePaths = new Set(["/dashboard", "/timetable", "/courses", "/exams"]);
-const instructorVisiblePaths = new Set(["/dashboard", "/timetable", "/courses", "/exams", "/sections"]);
+const studentVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses", "/exams"]);
+const instructorVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses", "/exams", "/sections"]);
+const adminVisiblePaths = new Set(["/dashboard", "/profile", "/admin", "/timetable", "/courses", "/rooms", "/exams", "/sections"]);
 
 const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isLanding = ["/", "/login", "/welcome"].includes(location.pathname);
-  const session = useMemo(() => getUserSession(), [location.pathname]);
+  const session = getUserSession();
   const visibleNavItems = useMemo(() => {
     if (session?.role === "student") {
       return navItems.filter((item) => studentVisiblePaths.has(item.path));
@@ -35,6 +38,10 @@ const Navbar = () => {
 
     if (session?.role === "instructor") {
       return navItems.filter((item) => instructorVisiblePaths.has(item.path));
+    }
+
+    if (session?.role === "admin") {
+      return navItems.filter((item) => adminVisiblePaths.has(item.path));
     }
 
     return navItems;
@@ -93,6 +100,7 @@ const Navbar = () => {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => navigate("/profile")}>Profile</DropdownMenuItem>
                 <DropdownMenuItem onClick={handleLogout}>Log out</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -117,6 +125,7 @@ const Navbar = () => {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => navigate("/profile")}>Profile</DropdownMenuItem>
                 <DropdownMenuItem onClick={handleLogout}>Log out</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

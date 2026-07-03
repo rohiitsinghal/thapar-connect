@@ -1,10 +1,12 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Calendar, BookOpen, DoorOpen, Users, Clock, AlertTriangle, CheckCircle2, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import Footer from "@/components/Footer";
 import { getUserSession } from "@/lib/auth";
-import { getInstructorProfile } from "@/lib/instructorData";
+import { findFacultyProfile, getPeopleData } from "@/lib/peopleData";
+import { getCourseCatalog, getCoursesForFaculty, type CourseCatalogItem } from "@/lib/courseData";
+import { fetchLatestTimetable, type TimetableClassEntry, type TimetablePayload } from "@/lib/timetableApi";
 
 const statCards = [
   { icon: BookOpen, label: "Total Courses", value: "352", change: "+12 this semester", color: "text-primary" },
@@ -13,92 +15,158 @@ const statCards = [
   { icon: Clock, label: "Exams Scheduled", value: "186", change: "All conflict-free", color: "text-gold" },
 ];
 
-const recentSchedules = [
-  { course: "UCS301 - Data Structures", time: "Mon/Wed 9:00-10:30", room: "LT-101", dept: "CSED", status: "Confirmed" },
-  { course: "UMA031 - Linear Algebra", time: "Tue/Thu 11:00-12:30", room: "LT-205", dept: "SOM", status: "Confirmed" },
-  { course: "UEE501 - Power Systems", time: "Mon/Wed 14:00-15:30", room: "D-Block 302", dept: "EIED", status: "Pending" },
-  { course: "UCS503 - Operating Systems", time: "Tue/Thu 9:00-10:30", room: "LT-103", dept: "CSED", status: "Confirmed" },
-  { course: "UME401 - Thermodynamics", time: "Wed/Fri 11:00-12:30", room: "A-Block 201", dept: "MED", status: "Conflict" },
-];
-
 const conflicts = [
   { issue: "Room LT-103 double-booked on Thursday 9:00 AM", severity: "High" },
   { issue: "Dr. Sharma has overlapping lectures Mon 2 PM", severity: "Medium" },
   { issue: "UCS601 exceeds room capacity (45 > 40)", severity: "Low" },
 ];
 
-const Dashboard = () => {
-  const session = useMemo(() => getUserSession(), []);
-  const isStudent = session?.role === "student";
-  const isInstructor = session?.role === "instructor";
-
-  const instructorProfile = useMemo(() => {
-    if (!isInstructor || !session) {
-      return null;
+const sortClasses = (classes: TimetableClassEntry[]): TimetableClassEntry[] =>
+  [...classes].sort((left, right) => {
+    if (left.day !== right.day) {
+      const order = { Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5 };
+      return (order[left.day as keyof typeof order] ?? 99) - (order[right.day as keyof typeof order] ?? 99);
     }
 
-    return getInstructorProfile(session.identifier);
+    if (left.slot_index !== right.slot_index) {
+      return left.slot_index - right.slot_index;
+    }
+
+    return left.course_code.localeCompare(right.course_code);
+  });
+
+const Dashboard = () => {
+  const session = useMemo(() => getUserSession(), []);
+  const [timetable, setTimetable] = useState<TimetablePayload | null>(null);
+  const isStudent = session?.role === "student";
+  const isInstructor = session?.role === "instructor";
+  const [facultyCourses, setFacultyCourses] = useState<CourseCatalogItem[] | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadTimetable = async () => {
+      try {
+        const data = await fetchLatestTimetable();
+        if (isMounted) {
+          setTimetable(data);
+        }
+      } catch {
+        if (isMounted) {
+          setTimetable(null);
+        }
+      }
+    };
+
+    void loadTimetable();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadFacultyCourses = async () => {
+      if (!isInstructor || !session) {
+        return;
+      }
+
+      try {
+        const [peopleData, catalog] = await Promise.all([getPeopleData(), getCourseCatalog()]);
+        const facultyProfile = findFacultyProfile(peopleData, session.identifier);
+        const courses = getCoursesForFaculty(catalog, facultyProfile);
+        if (isMounted) {
+          setFacultyCourses(courses);
+        }
+      } catch {
+        if (isMounted) {
+          setFacultyCourses([]);
+        }
+      }
+    };
+
+    void loadFacultyCourses();
+
+    return () => {
+      isMounted = false;
+    };
   }, [isInstructor, session]);
 
+  const facultyCourseCodes = useMemo(
+    () => new Set((facultyCourses ?? []).map((course) => course.courseCode)),
+    [facultyCourses]
+  );
+
   const instructorStats = useMemo(() => {
-    if (!instructorProfile) {
+    if (!isInstructor || facultyCourses === null) {
       return [] as typeof statCards;
     }
 
-    const uniqueCourses = new Set(instructorProfile.assignments.map((assignment) => assignment.courseCode));
-    const totalStudents = instructorProfile.assignments.reduce(
-      (accumulator, assignment) => accumulator + assignment.students.length,
-      0
-    );
+    const studentsInCourses = timetable
+      ? Object.values(timetable.by_student).filter((student) =>
+          student.classes.some((entry) => facultyCourseCodes.has(entry.course_code))
+        ).length
+      : 0;
 
     return [
       {
         icon: BookOpen,
         label: "Courses You Teach",
-        value: `${uniqueCourses.size}`,
+        value: `${facultyCourseCodes.size}`,
         change: "Assigned this semester",
         color: "text-primary",
       },
       {
         icon: Users,
         label: "Your Sections",
-        value: `${instructorProfile.assignments.length}`,
+        value: `${facultyCourses.length}`,
         change: "Currently active",
         color: "text-accent",
       },
       {
         icon: Users,
         label: "Students in Sections",
-        value: `${totalStudents}`,
+        value: `${studentsInCourses}`,
         change: "Across your classes",
         color: "text-crimson-light",
       },
       {
         icon: Clock,
         label: "Exam Schedules",
-        value: `${uniqueCourses.size}`,
+        value: `${facultyCourseCodes.size}`,
         change: "For your courses",
         color: "text-gold",
       },
     ];
-  }, [instructorProfile]);
-
-  const instructorRecentSchedules = useMemo(() => {
-    if (!instructorProfile) {
-      return recentSchedules;
-    }
-
-    return instructorProfile.assignments.map((assignment) => ({
-      course: `${assignment.courseCode} - ${assignment.courseName} (${assignment.sectionName})`,
-      time: assignment.time,
-      room: "Assigned Classroom",
-      dept: assignment.courseCode.slice(0, 3),
-      status: "Confirmed",
-    }));
-  }, [instructorProfile]);
+  }, [isInstructor, facultyCourses, facultyCourseCodes, timetable]);
 
   const visibleStats = isStudent ? [statCards[0]] : isInstructor ? instructorStats : statCards;
-  const visibleSchedules = isInstructor ? instructorRecentSchedules : recentSchedules;
+  const visibleSchedules = useMemo(() => {
+    if (!timetable) {
+      return [] as Array<{ course: string; time: string; room: string; dept: string; status: string }>;
+    }
+
+    let classes: TimetableClassEntry[] = [];
+
+    if (isStudent) {
+      classes = timetable.by_student[session?.identifier ?? ""]?.classes ?? [];
+    } else if (isInstructor) {
+      classes = timetable.timetable.filter((entry) => facultyCourseCodes.has(entry.course_code));
+    } else {
+      classes = timetable.timetable;
+    }
+
+    return sortClasses(classes).slice(0, 5).map((entry) => ({
+      course: `${entry.course_code} - ${entry.title}`,
+      time: `${entry.day.slice(0, 3)} ${entry.start}-${entry.end}`,
+      room: entry.room_id,
+      dept: entry.course_code.slice(0, 3),
+      status: "Confirmed",
+    }));
+  }, [isInstructor, isStudent, session?.identifier, timetable, facultyCourseCodes]);
+
   const showSidebar = !isStudent && !isInstructor;
   const subtitle = isInstructor
     ? `Instructor Overview — ${session?.displayName}`
@@ -156,7 +224,7 @@ const Dashboard = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {visibleSchedules.map((s, i) => (
+                      {visibleSchedules.length > 0 ? visibleSchedules.map((s, i) => (
                         <tr key={i} className="border-b border-border last:border-0">
                           <td className="py-3 font-medium text-foreground">{s.course}</td>
                           <td className="py-3 text-muted-foreground">{s.time}</td>
@@ -178,7 +246,13 @@ const Dashboard = () => {
                             </span>
                           </td>
                         </tr>
-                      ))}
+                      )) : (
+                        <tr>
+                          <td className="py-6 text-sm text-muted-foreground" colSpan={5}>
+                            No timetable has been generated yet.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>

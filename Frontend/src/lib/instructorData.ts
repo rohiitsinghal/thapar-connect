@@ -1,3 +1,5 @@
+import { getUserSession } from "@/lib/auth";
+
 export type SectionStudent = {
   name: string;
   rollNo: string;
@@ -145,12 +147,39 @@ export const instructorProfiles: InstructorProfile[] = [
 export const getInstructorProfile = (employeeId: string): InstructorProfile => {
   const normalizedId = employeeId.trim().toUpperCase();
   const matched = instructorProfiles.find((profile) => profile.employeeId === normalizedId);
-  return matched ?? instructorProfiles[0];
+  if (matched) {
+    return matched;
+  }
+
+  const session = getUserSession();
+  if (session?.role === "instructor") {
+    return {
+      employeeId: normalizedId,
+      name: session.displayName || normalizedId,
+      assignments: [],
+    };
+  }
+
+  return instructorProfiles[0];
 };
 
 export const findInstructorProfile = (employeeId: string): InstructorProfile | null => {
   const normalizedId = employeeId.trim().toUpperCase();
-  return instructorProfiles.find((profile) => profile.employeeId === normalizedId) ?? null;
+  const matched = instructorProfiles.find((profile) => profile.employeeId === normalizedId);
+  if (matched) {
+    return matched;
+  }
+
+  const session = getUserSession();
+  if (session?.role !== "instructor") {
+    return null;
+  }
+
+  return {
+    employeeId: normalizedId,
+    name: session.displayName || normalizedId,
+    assignments: [],
+  };
 };
 
 export const findStudentByRollNo = (rollNo: string): SectionStudent | null => {

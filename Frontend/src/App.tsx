@@ -15,6 +15,8 @@ import Rooms from "./pages/Rooms";
 import Exams from "./pages/Exams";
 import Sections from "./pages/Sections";
 import SectionStudents from "./pages/SectionStudents";
+import Profile from "./pages/Profile";
+import AdminSearch from "./pages/AdminSearch";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -31,6 +33,8 @@ const AppContent = () => {
         <Route path="/welcome" element={<Index />} />
         <Route path="/login" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/profile" element={<Profile />} />
+        <Route path="/admin" element={<AdminSearch />} />
         <Route path="/timetable" element={<Timetable />} />
         <Route path="/courses" element={<Courses />} />
         <Route path="/courses/material" element={<CourseMaterial />} />

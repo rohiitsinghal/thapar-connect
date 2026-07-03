@@ -21,6 +21,7 @@ Usage:
 
 import os
 from extractor import load_data
+from genMaster import build_master, load_timetable
 from scheduler import run
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ SOFTWARE_XLSX  = os.path.join(DATA_DIR,   "software_files.xlsx")
 ROOMS_XLSX     = os.path.join(DATA_DIR,   "rooms.xlsx")
 EXTRACTED_JSON = os.path.join(OUTPUT_DIR, "extracted_data.json")
 TIMETABLE_JSON = os.path.join(OUTPUT_DIR, "timetable.json")
+MASTER_TIMETABLE_XLSX = os.path.join(OUTPUT_DIR, "master_timetable.xlsx")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # *** SET THIS BEFORE EVERY RUN ***
@@ -82,6 +84,34 @@ SA_PARAMS = {
 }
 
 
+def generate_timetable(active_parity=ACTIVE_PARITY, sa_params=None):
+    if active_parity not in ("even", "odd"):
+        raise ValueError(f"ACTIVE_PARITY must be 'even' or 'odd', got '{active_parity}'")
+
+    selected_sa_params = dict(SA_PARAMS)
+    if sa_params:
+        selected_sa_params.update(sa_params)
+
+    active_sems = [2, 4, 6] if active_parity == "even" else [1, 3, 5]
+
+    load_data(
+        software_xlsx=SOFTWARE_XLSX,
+        rooms_xlsx=ROOMS_XLSX,
+        output_json=EXTRACTED_JSON,
+        active_semesters=active_sems,
+    )
+
+    run(
+        extracted_json=EXTRACTED_JSON,
+        output_json=TIMETABLE_JSON,
+        **selected_sa_params,
+    )
+
+    timetable = load_timetable(TIMETABLE_JSON)
+    build_master(timetable, MASTER_TIMETABLE_XLSX)
+    return timetable
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,22 +138,7 @@ if __name__ == "__main__":
     print("\n" + "─" * 65)
     print("  STEP 1 — EXTRACT DATA FROM EXCEL")
     print("─" * 65)
-    load_data(
-        software_xlsx  = SOFTWARE_XLSX,
-        rooms_xlsx     = ROOMS_XLSX,
-        output_json    = EXTRACTED_JSON,
-        active_semesters = active_sems,
-    )
-
-    # Step 2 — Schedule
-    print("\n" + "─" * 65)
-    print(f"  STEP 2 — SCHEDULE  ({ACTIVE_PARITY.upper()} semesters: {active_sems})")
-    print("─" * 65)
-    run(
-        extracted_json = EXTRACTED_JSON,
-        output_json    = TIMETABLE_JSON,
-        **SA_PARAMS,
-    )
+    generate_timetable(ACTIVE_PARITY)
 
     print("\n" + "=" * 65)
     print("  ALL DONE")
@@ -136,6 +151,7 @@ if __name__ == "__main__":
     print("    timetable['by_student']['1424000018']  → personal timetable")
     print("    timetable['by_day']['Monday']           → all Monday classes")
     print("    timetable['timetable']                  → all classes flat")
+    print("    master_timetable.xlsx                    → generated master spreadsheet")
     print()
     print("  Run python test.py afterwards to verify zero clashes.")
     print("=" * 65)
