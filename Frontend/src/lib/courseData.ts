@@ -205,7 +205,10 @@ const parseCatalog = async (): Promise<CourseCatalogItem[]> => {
 
 export const getCourseCatalog = (): Promise<CourseCatalogItem[]> => {
   if (!courseCatalogPromise) {
-    courseCatalogPromise = parseCatalog();
+    courseCatalogPromise = parseCatalog().catch((error) => {
+      courseCatalogPromise = null;
+      throw error;
+    });
   }
 
   return courseCatalogPromise;
@@ -215,13 +218,26 @@ export const inferStudentSemester = (profile: PeopleProfile): number | null => i
 
 const normalizePersonName = (value: string): string => normalizeLookup(value);
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// normalizePhrase reduces text to space-separated tokens, so a plain substring check
+// (e.g. "NC".includes) false-matches inside unrelated words like "FINANCIAL". Require
+// the term to appear as a whole word/phrase, bounded by spaces or string edges.
+const containsWholeWordPhrase = (haystack: string, needle: string): boolean => {
+  if (!needle) {
+    return false;
+  }
+
+  return new RegExp(`(?:^|\\s)${escapeRegExp(needle)}(?:\\s|$)`).test(haystack);
+};
+
 const courseMatchesStudyAreas = (course: CourseCatalogItem, studyAreas: string[]): boolean => {
   if (studyAreas.length === 0) {
     return false;
   }
 
   const courseSearchText = buildCourseSearchText(course);
-  return studyAreas.some((studyArea) => courseSearchText.includes(studyArea));
+  return studyAreas.some((studyArea) => containsWholeWordPhrase(courseSearchText, studyArea));
 };
 
 const getFacultySearchTerms = (profile: PeopleProfile): string[] => {
@@ -253,7 +269,7 @@ const courseMatchesFaculty = (course: CourseCatalogItem, profile: PeopleProfile)
   const courseSearchText = buildCourseSearchText(course);
   const facultyTerms = getFacultySearchTerms(profile);
 
-  return facultyTerms.some((term) => courseSearchText.includes(term));
+  return facultyTerms.some((term) => containsWholeWordPhrase(courseSearchText, term));
 };
 
 export const getCoursesForStudent = (catalog: CourseCatalogItem[], profile: PeopleProfile | null): CourseCatalogItem[] => {

@@ -80,7 +80,8 @@ const Dashboard = () => {
         if (isMounted) {
           setFacultyCourses(courses);
         }
-      } catch {
+      } catch (facultyLoadError) {
+        console.error("Failed to load faculty course assignments", facultyLoadError);
         if (isMounted) {
           setFacultyCourses([]);
         }
@@ -175,8 +176,8 @@ const Dashboard = () => {
     : "Academic Scheduling Overview — Spring 2026";
 
   return (
-    <div className="min-h-screen pt-20 pb-0">
-      <div className="container mx-auto px-4 pb-16">
+    <div className="min-h-screen flex flex-col pt-20 pb-0">
+      <div className="container mx-auto px-4 pb-16 flex-1">
         <div className="mb-8">
           <h1 className="font-display text-3xl font-bold text-foreground">Dashboard</h1>
           <p className="text-muted-foreground mt-1">{subtitle}</p>

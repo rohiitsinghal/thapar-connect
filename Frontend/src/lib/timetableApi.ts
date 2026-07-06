@@ -82,3 +82,12 @@ export const generateTimetable = async (payload: GenerateTimetableRequest = {}):
 
   return data.timetable;
 };
+
+export const fetchMasterTimetableXlsx = async (): Promise<Blob> => {
+  const response = await fetch(`${API_BASE_URL}/timetable/master`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch master timetable: ${response.status}`);
+  }
+
+  return response.blob();
+};

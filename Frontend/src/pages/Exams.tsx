@@ -14,8 +14,8 @@ const exams = [
 ];
 
 const Exams = () => (
-  <div className="min-h-screen pt-20 pb-0">
-    <div className="container mx-auto px-4 pb-16">
+  <div className="min-h-screen flex flex-col pt-20 pb-0">
+    <div className="container mx-auto px-4 pb-16 flex-1">
       <div className="mb-8">
         <h1 className="font-display text-3xl font-bold text-foreground">Exam Schedule</h1>
         <p className="text-muted-foreground mt-1">End Semester Examinations — Spring 2026</p>

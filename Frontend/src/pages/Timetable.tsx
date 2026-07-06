@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import html2canvas from "html2canvas";
+import { Download, FileSpreadsheet, ImageDown, Pencil, RefreshCw, Sparkles, Undo2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Textarea } from "@/components/ui/textarea";
 import Footer from "@/components/Footer";
 import { getUserSession } from "@/lib/auth";
 import { findFacultyProfile, getPeopleData } from "@/lib/peopleData";
@@ -15,10 +18,16 @@ import {
 } from "@/lib/timetablePublishSettings";
 import {
   fetchLatestTimetable,
+  fetchMasterTimetableXlsx,
   generateTimetable,
   type TimetableClassEntry,
   type TimetablePayload,
 } from "@/lib/timetableApi";
+
+type StudentCellOverride = {
+  customText: string;
+  hideOriginal: boolean;
+};
 
 const ICS_TIMEZONE = "Asia/Kolkata";
 const DAY_INDEX: Record<string, number> = {
@@ -126,6 +135,14 @@ const Timetable = () => {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [facultyCourseCodes, setFacultyCourseCodes] = useState<Set<string> | null>(null);
+  const [downloadingImage, setDownloadingImage] = useState(false);
+  const [downloadingXlsx, setDownloadingXlsx] = useState(false);
+  const [isEditingTimetable, setIsEditingTimetable] = useState(false);
+  const [studentOverrides, setStudentOverrides] = useState<Record<string, StudentCellOverride>>({});
+  const [editingCellKey, setEditingCellKey] = useState<string | null>(null);
+  const [editDraftText, setEditDraftText] = useState("");
+  const [editDraftHide, setEditDraftHide] = useState(false);
+  const timetableCardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -152,9 +169,11 @@ const Timetable = () => {
             if (isMounted) {
               setFacultyCourseCodes(courseCodes);
             }
-          } catch {
+          } catch (facultyLoadError) {
+            console.error("Failed to load faculty course assignments", facultyLoadError);
             if (isMounted) {
               setFacultyCourseCodes(new Set());
+              setError("Could not load your faculty course records. Try refreshing the page.");
             }
           }
         }
@@ -361,13 +380,103 @@ const Timetable = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadPng = async () => {
+    if (!timetableCardRef.current) {
+      return;
+    }
+
+    setDownloadingImage(true);
+    setError(null);
+    try {
+      const canvas = await html2canvas(timetableCardRef.current, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+      });
+      const dataUrl = canvas.toDataURL("image/png");
+      const exportDate = new Date();
+      const filename = `thapar-timetable-${exportDate.getFullYear()}-${pad(exportDate.getMonth() + 1)}-${pad(exportDate.getDate())}.png`;
+
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : "Failed to download timetable image");
+    } finally {
+      setDownloadingImage(false);
+    }
+  };
+
+  const handleDownloadXlsx = async () => {
+    setDownloadingXlsx(true);
+    setError(null);
+    try {
+      const blob = await fetchMasterTimetableXlsx();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "master_timetable.xlsx";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : "Failed to download master timetable");
+    } finally {
+      setDownloadingXlsx(false);
+    }
+  };
+
+  const openCellEditor = (slotKey: string) => {
+    const existing = studentOverrides[slotKey];
+    setEditDraftText(existing?.customText ?? "");
+    setEditDraftHide(existing?.hideOriginal ?? false);
+    setEditingCellKey(slotKey);
+  };
+
+  const saveCellEdit = () => {
+    if (!editingCellKey) {
+      return;
+    }
+
+    setStudentOverrides((prev) => {
+      const next = { ...prev };
+      if (!editDraftText.trim() && !editDraftHide) {
+        delete next[editingCellKey];
+      } else {
+        next[editingCellKey] = { customText: editDraftText.trim(), hideOriginal: editDraftHide };
+      }
+      return next;
+    });
+    setEditingCellKey(null);
+  };
+
+  const clearCellEdit = () => {
+    if (!editingCellKey) {
+      return;
+    }
+
+    setStudentOverrides((prev) => {
+      const next = { ...prev };
+      delete next[editingCellKey];
+      return next;
+    });
+    setEditingCellKey(null);
+  };
+
+  const resetAllEdits = () => {
+    setStudentOverrides({});
+  };
+
   const timeslots = timetable?.meta.timeslots.slice(0, timetable.meta.slots_per_day) ?? [];
   const days = timetable?.meta.days ?? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
   const totalVisibleClasses = visibleClasses.length;
 
   return (
-    <div className="min-h-screen pt-20 pb-0">
-      <div className="container mx-auto px-4 pb-16">
+    <div className="min-h-screen flex flex-col pt-20 pb-0">
+      <div className="container mx-auto px-4 pb-16 flex-1">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between mb-8">
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">Timetable</h1>
@@ -383,7 +492,7 @@ const Timetable = () => {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div className="flex flex-col sm:flex-row flex-wrap gap-2">
             <Button variant="outline" onClick={handleReloadTimetable} className="gap-2" disabled={refreshing || loading}>
               <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
               Refresh
@@ -392,8 +501,46 @@ const Timetable = () => {
               <Download className="h-4 w-4" />
               Import to Calendar
             </Button>
+            {session?.role === "admin" ? (
+              <Button onClick={handleDownloadXlsx} variant="outline" className="gap-2" disabled={downloadingXlsx}>
+                <FileSpreadsheet className="h-4 w-4" />
+                {downloadingXlsx ? "Downloading..." : "Download XLSX"}
+              </Button>
+            ) : (
+              <Button onClick={handleDownloadPng} variant="outline" className="gap-2" disabled={downloadingImage || !visibleClasses.length}>
+                <ImageDown className="h-4 w-4" />
+                {downloadingImage ? "Downloading..." : "Download PNG"}
+              </Button>
+            )}
+            {session?.role === "student" ? (
+              <>
+                <Button
+                  variant={isEditingTimetable ? "default" : "outline"}
+                  onClick={() => setIsEditingTimetable((value) => !value)}
+                  className="gap-2"
+                >
+                  <Pencil className="h-4 w-4" />
+                  {isEditingTimetable ? "Done Editing" : "Edit Timetable"}
+                </Button>
+                {Object.keys(studentOverrides).length > 0 ? (
+                  <Button variant="ghost" onClick={resetAllEdits} className="gap-2 text-muted-foreground">
+                    <Undo2 className="h-4 w-4" />
+                    Reset Edits
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </div>
+
+        {isEditingTimetable ? (
+          <Card className="mb-6 border-accent/30 bg-accent/5">
+            <CardContent className="p-4 text-sm text-black">
+              Click any cell to add a personal note or hide a class in your view. These edits stay in this browser
+              tab only and reset automatically when you refresh the page.
+            </CardContent>
+          </Card>
+        ) : null}
 
         {error ? (
           <Card className="mb-6 border-destructive/30 bg-destructive/5">
@@ -503,7 +650,7 @@ const Timetable = () => {
           </Card>
         ) : null}
 
-        <Card className="shadow-card overflow-hidden">
+        <Card className="shadow-card overflow-hidden" ref={timetableCardRef}>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[960px]">
@@ -536,10 +683,19 @@ const Timetable = () => {
                           );
                         }
 
-                        return (
-                          <td key={slotKey} className="p-2">
-                            <div className="min-h-[64px] space-y-2">
-                              {classesInCell.map((entry) => (
+                        const canEdit = isEditingTimetable && session?.role === "student";
+                        const override = studentOverrides[slotKey];
+                        const showOriginal = classesInCell.length > 0 && !override?.hideOriginal;
+                        const isEmpty = !showOriginal && continuationClasses.length === 0 && !override?.customText;
+
+                        const cellContent = (
+                          <div
+                            className={`min-h-[64px] space-y-2 ${
+                              canEdit ? "rounded-lg ring-1 ring-transparent hover:ring-primary/50 transition-shadow" : ""
+                            }`}
+                          >
+                            {showOriginal &&
+                              classesInCell.map((entry) => (
                                 <div key={entry.unit_id} className={`rounded-lg border p-2 ${getClassStyle(entry.type)}`}>
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="font-semibold text-xs">{entry.course_code}</div>
@@ -550,15 +706,93 @@ const Timetable = () => {
                                   <div className="text-[10px] opacity-70">{entry.start} - {entry.end}</div>
                                 </div>
                               ))}
-                              {continuationClasses.length > 0 ? (
-                                <div className="text-[10px] italic text-muted-foreground">
-                                  {continuationClasses.map((entry) => `${entry.course_code} continues`).join(" · ")}
+                            {override?.customText ? (
+                              <div className="rounded-lg border border-dashed border-accent/60 bg-accent/10 p-2">
+                                <div className="text-[10px] uppercase tracking-wide text-accent font-semibold mb-0.5">
+                                  Personal note
                                 </div>
-                              ) : null}
-                              {classesInCell.length === 0 && continuationClasses.length === 0 ? (
-                                <div className="min-h-[64px] rounded-lg border border-dashed border-border/70" />
-                              ) : null}
-                            </div>
+                                <div className="text-xs whitespace-pre-wrap">{override.customText}</div>
+                              </div>
+                            ) : null}
+                            {continuationClasses.length > 0 && showOriginal ? (
+                              <div className="text-[10px] italic text-muted-foreground">
+                                {continuationClasses.map((entry) => `${entry.course_code} continues`).join(" · ")}
+                              </div>
+                            ) : null}
+                            {isEmpty ? (
+                              <div
+                                className={`min-h-[64px] rounded-lg border border-dashed border-border/70 ${
+                                  canEdit ? "flex items-center justify-center text-[10px] text-muted-foreground/70" : ""
+                                }`}
+                              >
+                                {canEdit ? "+ Add note" : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+
+                        if (!canEdit) {
+                          return (
+                            <td key={slotKey} className="p-2">
+                              {cellContent}
+                            </td>
+                          );
+                        }
+
+                        return (
+                          <td key={slotKey} className="p-2">
+                            <Popover
+                              open={editingCellKey === slotKey}
+                              onOpenChange={(open) => {
+                                if (!open) {
+                                  setEditingCellKey(null);
+                                }
+                              }}
+                            >
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="w-full text-left cursor-pointer"
+                                  onClick={() => openCellEditor(slotKey)}
+                                >
+                                  {cellContent}
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-72 space-y-3">
+                                <div>
+                                  <p className="text-sm font-medium mb-1">
+                                    Personal note for {day} {slot.start}-{slot.end}
+                                  </p>
+                                  <Textarea
+                                    value={editDraftText}
+                                    onChange={(event) => setEditDraftText(event.target.value)}
+                                    placeholder="e.g. Study session, reminder..."
+                                    rows={3}
+                                  />
+                                </div>
+                                {classesInCell.length > 0 ? (
+                                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <input
+                                      type="checkbox"
+                                      checked={editDraftHide}
+                                      onChange={(event) => setEditDraftHide(event.target.checked)}
+                                    />
+                                    Hide original class in this view
+                                  </label>
+                                ) : null}
+                                <div className="flex justify-end gap-2">
+                                  <Button size="sm" variant="ghost" onClick={clearCellEdit}>
+                                    Clear
+                                  </Button>
+                                  <Button size="sm" onClick={saveCellEdit}>
+                                    Save
+                                  </Button>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground">
+                                  Personal edits are local to your browser and reset when you refresh.
+                                </p>
+                              </PopoverContent>
+                            </Popover>
                           </td>
                         );
                       })}

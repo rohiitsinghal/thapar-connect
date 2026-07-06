@@ -140,11 +140,16 @@ export const getPeopleData = (): Promise<PeopleData> => {
     peopleDataPromise = Promise.all([
       parseWorkbook(studentWorkbookUrl, "student"),
       parseWorkbook(facultyWorkbookUrl, "faculty"),
-    ]).then(([students, faculty]) => {
-      const resolvedData = { students, faculty };
-      peopleDataCache = resolvedData;
-      return resolvedData;
-    });
+    ])
+      .then(([students, faculty]) => {
+        const resolvedData = { students, faculty };
+        peopleDataCache = resolvedData;
+        return resolvedData;
+      })
+      .catch((error) => {
+        peopleDataPromise = null;
+        throw error;
+      });
   }
 
   return peopleDataPromise;

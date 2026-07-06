@@ -154,8 +154,8 @@ const Profile = () => {
   const detailsEntries = profile ? Object.entries(profile.details) : [];
 
   return (
-    <div className="min-h-screen bg-background pt-20 pb-0">
-      <div className="container mx-auto px-4 pb-16 space-y-8">
+    <div className="min-h-screen flex flex-col bg-background pt-20 pb-0">
+      <div className="container mx-auto px-4 pb-16 space-y-8 flex-1">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm text-muted-foreground">Personal record</p>

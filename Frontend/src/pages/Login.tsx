@@ -17,14 +17,14 @@ import { findFacultyProfile, findStudentProfile, getPeopleData } from "@/lib/peo
 
 const roleOptions = [
   { value: "admin", label: "Admin" },
-  { value: "student", label: "Student" },
   { value: "instructor", label: "Faculty" },
+  { value: "student", label: "Student" },
 ] as const;
 
 const roleFieldConfig = {
   admin: {
     idLabel: "Admin Email",
-    idPlaceholder: "admin@thapar.edu",
+    idPlaceholder: "admin",
     idType: "email",
     passwordLabel: "Password",
   },
@@ -57,16 +57,9 @@ const Login = () => {
     if (!role) {
       return "Select a role to continue to the platform.";
     }
-
-    if (role === "admin") {
-      return "Admin access selected. Use admin@thapar.edu and qwertyuiop to search student or faculty records.";
+    if (role === "student") {
+      return `Student access selected. `;
     }
-
-    if (role === "instructor") {
-      return `Faculty access selected. Default password is ${getDefaultPassword("instructor")}, and it can be changed after login.`;
-    }
-
-    return `Student access selected. Default password is ${getDefaultPassword("student")}, and it can be changed after login.`;
   }, [role]);
 
   const handleRoleChange = (value: string) => {
@@ -187,13 +180,13 @@ const Login = () => {
               </Select>
               <p className="text-sm text-muted-foreground">{helperText}</p>
               {role === "admin" ? (
-                <p className="text-xs text-muted-foreground">Login with admin@thapar.edu and password qwertyuiop.</p>
+                <p className="text-xs text-muted-foreground"></p>
               ) : null}
               {role === "student" ? (
                 <p className="text-xs text-muted-foreground">Login with your roll number and the default password 12345, then change it.</p>
               ) : null}
               {role === "instructor" ? (
-                <p className="text-xs text-muted-foreground">Login with your employee code or email and the default password tiet12345, then change it.</p>
+                <p className="text-xs text-muted-foreground"></p>
               ) : null}
             </div>
 

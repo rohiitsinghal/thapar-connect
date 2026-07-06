@@ -94,8 +94,8 @@ const Courses = () => {
   };
 
   return (
-    <div className="min-h-screen pt-20 pb-0">
-      <div className="container mx-auto px-4 pb-16">
+    <div className="min-h-screen flex flex-col pt-20 pb-0">
+      <div className="container mx-auto px-4 pb-16 flex-1">
         <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
           <div>
             <h1 className="font-display text-3xl font-bold text-foreground">Course Catalog</h1>
