@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import html2canvas from "html2canvas";
-import { Download, FileSpreadsheet, ImageDown, Pencil, RefreshCw, Sparkles, Undo2 } from "lucide-react";
+import {
+  CheckCircle2,
+  Download,
+  FileSpreadsheet,
+  ImageDown,
+  Pencil,
+  RefreshCw,
+  Sparkles,
+  Undo2,
+  Upload,
+  XCircle,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,10 +35,31 @@ import {
   type TimetablePayload,
 } from "@/lib/timetableApi";
 
+// NOTE: this should match whatever base URL `src/lib/timetableApi.ts` uses
+// to talk to api_server.py. If that file exports a constant (e.g. API_BASE
+// or API_BASE_URL), import and reuse it instead of this local copy so the
+// two never drift apart.
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
 type StudentCellOverride = {
   customText: string;
   hideOriginal: boolean;
 };
+
+// Field name is what the backend matches on (api_server.py's
+// /timetable-data/upload endpoint) — the admin's original filename doesn't
+// matter at all, so labels/hints below are just for the admin's benefit.
+type DataFileKey = "students" | "curriculum" | "teacher_name" | "teachers" | "rooms";
+
+type DataFileStatus = Record<DataFileKey, boolean> & { all_present: boolean };
+
+const DATA_FILE_FIELDS: { key: DataFileKey; label: string; hint: string }[] = [
+  { key: "students", label: "Students", hint: "enrollment_no, name, email, major, minor, semester" },
+  { key: "curriculum", label: "Curriculum", hint: "program, semester, course_code, title, L, T, P, credits, offered_as, teacher, teacher_code" },
+  { key: "teacher_name", label: "Teacher Name", hint: "teacher_code, teacher_name" },
+  { key: "teachers", label: "Teachers", hint: "teacher_code, teacher_name (fallback source)" },
+  { key: "rooms", label: "Rooms", hint: "room_id, ..., capacity" },
+];
 
 const ICS_TIMEZONE = "Asia/Kolkata";
 const DAY_INDEX: Record<string, number> = {
@@ -117,6 +149,39 @@ const sortClasses = (classes: TimetableClassEntry[]): TimetableClassEntry[] =>
     return left.course_code.localeCompare(right.course_code);
   });
 
+// ── Data-file upload helpers ────────────────────────────────────────────
+// These talk directly to api_server.py's /timetable-data/* endpoints.
+
+const fetchDataFileStatus = async (): Promise<DataFileStatus> => {
+  const response = await fetch(`${API_BASE}/timetable-data/status`);
+  if (!response.ok) {
+    throw new Error("Failed to check uploaded data files");
+  }
+  return (await response.json()) as DataFileStatus;
+};
+
+const uploadDataFiles = async (files: Partial<Record<DataFileKey, File>>): Promise<DataFileStatus> => {
+  const formData = new FormData();
+  Object.entries(files).forEach(([key, file]) => {
+    if (file) {
+      formData.append(key, file);
+    }
+  });
+
+  const response = await fetch(`${API_BASE}/timetable-data/upload`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? "Failed to upload data files");
+  }
+
+  const result = (await response.json()) as { status: DataFileStatus };
+  return result.status;
+};
+
 const Timetable = () => {
   const session = getUserSession();
   const initialPublishSettings = useMemo(() => getTimetablePublishSettings(), []);
@@ -143,6 +208,59 @@ const Timetable = () => {
   const [editDraftText, setEditDraftText] = useState("");
   const [editDraftHide, setEditDraftHide] = useState(false);
   const timetableCardRef = useRef<HTMLDivElement>(null);
+
+  // ── Data-file upload state ──────────────────────────────────────────
+  const [dataFileStatus, setDataFileStatus] = useState<DataFileStatus | null>(null);
+  const [selectedDataFiles, setSelectedDataFiles] = useState<Partial<Record<DataFileKey, File>>>({});
+  const [uploadingDataFiles, setUploadingDataFiles] = useState(false);
+  const [dataFileError, setDataFileError] = useState<string | null>(null);
+
+  const refreshDataFileStatus = async () => {
+    try {
+      const status = await fetchDataFileStatus();
+      setDataFileStatus(status);
+    } catch (statusError) {
+      // Non-fatal: admin can still try uploading/generating; button will
+      // just stay disabled until a status check succeeds.
+      console.error(statusError);
+    }
+  };
+
+  useEffect(() => {
+    if (session?.role === "admin") {
+      void refreshDataFileStatus();
+    }
+  }, [session?.role]);
+
+  const handleDataFileSelect = (key: DataFileKey, fileList: FileList | null) => {
+    const file = fileList?.[0];
+    setSelectedDataFiles((prev) => ({ ...prev, [key]: file ?? undefined }));
+  };
+
+  const handleUploadDataFiles = async () => {
+    const filesToUpload = Object.fromEntries(
+      Object.entries(selectedDataFiles).filter(([, file]) => Boolean(file))
+    ) as Partial<Record<DataFileKey, File>>;
+
+    if (Object.keys(filesToUpload).length === 0) {
+      setDataFileError("Choose at least one file to upload.");
+      return;
+    }
+
+    setUploadingDataFiles(true);
+    setDataFileError(null);
+    try {
+      const status = await uploadDataFiles(filesToUpload);
+      setDataFileStatus(status);
+      setSelectedDataFiles({});
+    } catch (uploadError) {
+      setDataFileError(uploadError instanceof Error ? uploadError.message : "Failed to upload data files");
+    } finally {
+      setUploadingDataFiles(false);
+    }
+  };
+
+  const allDataFilesUploaded = dataFileStatus?.all_present ?? false;
 
   useEffect(() => {
     let isMounted = true;
@@ -268,6 +386,11 @@ const Timetable = () => {
   };
 
   const handlePublishAndGenerate = async () => {
+    if (!allDataFilesUploaded) {
+      setError("Upload all 5 data files (students, curriculum, teacher_name, teachers, rooms) before generating.");
+      return;
+    }
+
     setGenerating(true);
     setError(null);
 
@@ -581,7 +704,71 @@ const Timetable = () => {
 
         {session?.role === "admin" ? (
           <Card className="mb-6 shadow-card">
-            <CardContent className="p-4 flex flex-col gap-4">
+            <CardContent className="p-4 flex flex-col gap-5">
+              {/* ── 5-file data upload area ─────────────────────────── */}
+              <div>
+                <p className="text-sm font-medium text-foreground mb-1">Data Files</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Upload all 5 files (any filename is fine — just make sure the column layout inside each
+                  matches). Re-uploading a file replaces the previous one.
+                </p>
+
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  {DATA_FILE_FIELDS.map(({ key, label, hint }) => {
+                    const isUploaded = dataFileStatus?.[key] ?? false;
+                    const isSelected = Boolean(selectedDataFiles[key]);
+                    return (
+                      <div key={key} className="rounded-xl border border-border p-3 bg-secondary/30">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <p className="text-xs font-semibold text-foreground">{label}</p>
+                          {isUploaded ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                          ) : (
+                            <XCircle className="h-4 w-4 text-muted-foreground/50 shrink-0" />
+                          )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mb-2 leading-snug">{hint}</p>
+                        <Input
+                          type="file"
+                          accept=".xlsx,.xlsm"
+                          className="text-xs h-8 file:mr-2 file:text-xs"
+                          onChange={(event) => handleDataFileSelect(key, event.target.files)}
+                        />
+                        {isSelected ? (
+                          <p className="text-[10px] text-primary mt-1 truncate">
+                            Selected: {selectedDataFiles[key]?.name}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 mt-3">
+                  <Button
+                    variant="outline"
+                    onClick={handleUploadDataFiles}
+                    disabled={uploadingDataFiles || Object.keys(selectedDataFiles).length === 0}
+                    className="gap-2 w-fit"
+                  >
+                    <Upload className="h-4 w-4" />
+                    {uploadingDataFiles ? "Uploading..." : "Upload Selected Files"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    {allDataFilesUploaded
+                      ? "All 5 data files are present — ready to generate."
+                      : "Waiting on: " +
+                        DATA_FILE_FIELDS.filter((f) => !(dataFileStatus?.[f.key] ?? false))
+                          .map((f) => f.label)
+                          .join(", ")}
+                  </p>
+                </div>
+
+                {dataFileError ? <p className="text-sm text-destructive mt-2">{dataFileError}</p> : null}
+              </div>
+
+              <div className="h-px bg-border" />
+
               <div className="flex flex-col lg:flex-row lg:items-end gap-3">
                 <div className="w-full lg:max-w-[220px]">
                   <p className="text-sm font-medium text-foreground mb-2">Semester Length (weeks)</p>
@@ -638,7 +825,12 @@ const Timetable = () => {
                     </Button>
                   </div>
                 </div>
-                <Button onClick={handlePublishAndGenerate} disabled={generating} className="gap-2 lg:ml-auto">
+                <Button
+                  onClick={handlePublishAndGenerate}
+                  disabled={generating || !allDataFilesUploaded}
+                  className="gap-2 lg:ml-auto"
+                  title={!allDataFilesUploaded ? "Upload all 5 data files first" : undefined}
+                >
                   <Sparkles className="h-4 w-4" />
                   {generating ? "Generating..." : "Publish & Generate"}
                 </Button>
