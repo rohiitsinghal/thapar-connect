@@ -15,6 +15,11 @@ Frontend/dist
 Frontend/dist-ssr
 Frontend/*.local
 
+# Backend secrets & caches
+backend_new/.env
+backend_new/__pycache__
+backend/.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -6,8 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Footer from "@/components/Footer";
-import { clearUserSession, getUserSession, setPasswordForUser, verifyPassword } from "@/lib/auth";
+import { clearUserSession, getUserSession } from "@/lib/auth";
 import { findFacultyProfile, findStudentProfile, getPeopleData, PeopleProfile } from "@/lib/peopleData";
+import { changeFacultyPassword } from "@/lib/facultyAuthApi";
+import { changeStudentPassword } from "@/lib/studentAuthApi";
 import { toast } from "sonner";
 import { LockKeyhole, Mail, UserRound, ArrowLeft, LogOut } from "lucide-react";
 
@@ -97,24 +99,28 @@ const Profile = () => {
       return;
     }
 
-    const authRole = session.role === "student" ? "student" : "instructor";
-    if (!verifyPassword(authRole, profile.primaryId, trimmedCurrentPassword)) {
-      setPageError("Current password is incorrect.");
-      return;
-    }
-
     setSaving(true);
     setPageError("");
 
     try {
-      setPasswordForUser(authRole, profile.primaryId, trimmedNewPassword);
+      if (!session.token) {
+        setPageError("Your session has expired. Please log in again.");
+        return;
+      }
+
+      if (session.role === "student") {
+        await changeStudentPassword(session.token, trimmedCurrentPassword, trimmedNewPassword);
+      } else {
+        await changeFacultyPassword(session.token, trimmedCurrentPassword, trimmedNewPassword);
+      }
+
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      toast.success("Password updated for this browser");
+      toast.success("Password updated");
     } catch (error) {
       console.error(error);
-      setPageError("Unable to update the password right now.");
+      setPageError(error instanceof Error ? error.message : "Unable to update the password right now.");
     } finally {
       setSaving(false);
     }

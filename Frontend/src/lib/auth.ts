@@ -8,6 +8,8 @@ export type UserSession = {
   role: UserRole;
   displayName: string;
   identifier: string;
+  /** JWT issued by the backend. Only set for roles authenticated against DynamoDB (currently: student). */
+  token?: string;
 };
 
 const DEFAULT_PASSWORDS: Record<AuthRole, string> = {

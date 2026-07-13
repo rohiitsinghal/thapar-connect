@@ -12,8 +12,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import heroCampus from "@/assets/thapar.jpg";
-import { getDefaultPassword, setUserSession, verifyPassword } from "@/lib/auth";
-import { findFacultyProfile, findStudentProfile, getPeopleData } from "@/lib/peopleData";
+import { setUserSession } from "@/lib/auth";
+import { loginFaculty } from "@/lib/facultyAuthApi";
+import { loginStudent } from "@/lib/studentAuthApi";
 
 const roleOptions = [
   { value: "admin", label: "Admin" },
@@ -29,8 +30,8 @@ const roleFieldConfig = {
     passwordLabel: "Password",
   },
   instructor: {
-    idLabel: "Employee Code or Email",
-    idPlaceholder: "Enter your employee code or email",
+    idLabel: "Employee Code",
+    idPlaceholder: "Enter your employee code",
     idType: "text",
     passwordLabel: "Password",
   },
@@ -98,50 +99,36 @@ const Login = () => {
         return;
       }
 
-      const peopleData = await getPeopleData();
-
       if (selectedRole === "student") {
-        const studentProfile = findStudentProfile(peopleData, trimmedIdentifier);
-        if (!studentProfile) {
-          setLoginError("No student profile was found for that roll number.");
-          return;
+        try {
+          const result = await loginStudent(trimmedIdentifier, trimmedPassword);
+          setLoginError("");
+          setUserSession({
+            role: selectedRole,
+            displayName: result.name,
+            identifier: result.roll_no,
+            token: result.token,
+          });
+          navigate("/profile");
+        } catch (error) {
+          setLoginError(error instanceof Error ? error.message : "Login failed. Please try again.");
         }
+        return;
+      }
 
-        if (!verifyPassword("student", studentProfile.primaryId, trimmedPassword)) {
-          setLoginError(`Incorrect password. The default student password is ${getDefaultPassword("student")}.`);
-          return;
-        }
-
+      try {
+        const result = await loginFaculty(trimmedIdentifier, trimmedPassword);
         setLoginError("");
         setUserSession({
           role: selectedRole,
-          displayName: studentProfile.displayName,
-          identifier: studentProfile.primaryId,
+          displayName: result.name,
+          identifier: result.employee_code,
+          token: result.token,
         });
-
         navigate("/profile");
-        return;
+      } catch (error) {
+        setLoginError(error instanceof Error ? error.message : "Login failed. Please try again.");
       }
-
-      const facultyProfile = findFacultyProfile(peopleData, trimmedIdentifier);
-      if (!facultyProfile) {
-        setLoginError("No faculty profile was found for that employee code or email.");
-        return;
-      }
-
-      if (!verifyPassword("instructor", facultyProfile.primaryId, trimmedPassword)) {
-        setLoginError(`Incorrect password. The default faculty password is ${getDefaultPassword("instructor")}.`);
-        return;
-      }
-
-      setLoginError("");
-      setUserSession({
-        role: selectedRole,
-        displayName: facultyProfile.displayName,
-        identifier: facultyProfile.primaryId,
-      });
-
-      navigate("/profile");
     } catch (error) {
       console.error(error);
       setLoginError("Unable to load login data right now. Please try again.");
@@ -186,7 +173,7 @@ const Login = () => {
                 <p className="text-xs text-muted-foreground">Login with your roll number and the default password 12345, then change it.</p>
               ) : null}
               {role === "instructor" ? (
-                <p className="text-xs text-muted-foreground"></p>
+                <p className="text-xs text-muted-foreground">Login with your employee code and the default password tiet12345, then change it.</p>
               ) : null}
             </div>
 

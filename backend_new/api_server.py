@@ -12,6 +12,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -21,6 +22,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+from auth import router as student_auth_router
+from faculty_auth import router as faculty_auth_router
 from main import (
     ACTIVE_PARITY,
     EXTRACTED_JSON,
@@ -43,6 +48,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(student_auth_router)
+app.include_router(faculty_auth_router)
 
 
 class PublishSettingsPayload(BaseModel):
