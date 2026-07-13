@@ -72,6 +72,16 @@ MAX_P_PER_WEEK   = 4   # cap extreme/erroneous P values, with a warning
 VALID_OFFERED_AS = {"major", "minor", "both", "major/minor"}
 
 
+def _get_sheet(wb, preferred_name):
+    """Return wb[preferred_name] if that sheet exists, else the workbook's
+    active/first sheet. Lets us accept uploaded files whose sheet tab name
+    doesn't exactly match what the original combined workbook used, as long
+    as the COLUMN layout is unchanged."""
+    if preferred_name in wb.sheetnames:
+        return wb[preferred_name]
+    return wb.active
+
+
 def _canonical(name):
     if not name or str(name).strip() in ("", "nan", "None"):
         return ""
@@ -187,10 +197,10 @@ def _expand_to_units(subjects):
 # Loaders
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_curriculum_and_teachers(wb):
+def _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb, teachers_wb):
     print("\n  [1/3] Loading curriculum + teachers ...")
 
-    ws        = wb['curriculum']
+    ws        = _get_sheet(curriculum_wb, 'curriculum')
     rows      = list(ws.iter_rows(values_only=True))
     data_rows = [r for r in rows[2:] if any(c is not None for c in r)]
 
@@ -247,7 +257,7 @@ def _load_curriculum_and_teachers(wb):
             teacher_info[teacher_code] = teacher_name
             teacher_courses[teacher_code].add(code)
 
-    ws_tn = wb['teacher_ name']
+    ws_tn = _get_sheet(teacher_name_wb, 'teacher_ name')
     for r in list(ws_tn.iter_rows(values_only=True))[1:]:
         if not any(c for c in r): continue
         code = str(r[0]).strip() if r[0] else ""
@@ -259,7 +269,7 @@ def _load_curriculum_and_teachers(wb):
             teacher_info[tc] = name
             teacher_courses[tc].add(code)
 
-    ws_t = wb['teachers']
+    ws_t = _get_sheet(teachers_wb, 'teachers')
     for r in list(ws_t.iter_rows(values_only=True))[1:]:
         if not any(c for c in r): continue
         code = str(r[0]).strip() if r[0] else ""
@@ -328,9 +338,9 @@ def _load_rooms(rooms_path):
     return rooms
 
 
-def _load_students(wb):
+def _load_students(students_wb):
     print("\n  [3/3] Loading students ...")
-    ws   = wb['Sheet1']
+    ws   = _get_sheet(students_wb, 'Sheet1')
     rows = list(ws.iter_rows(values_only=True))[1:]
 
     students   = {}
@@ -506,17 +516,21 @@ def _to_json(data):
     }
 
 
-def load_data(software_xlsx, rooms_xlsx, output_json, active_semesters=None):
+def load_data(students_xlsx, curriculum_xlsx, teacher_name_xlsx, teachers_xlsx,
+              rooms_xlsx, output_json, active_semesters=None):
     print("=" * 65)
     print("  TSLAS DATA EXTRACTOR  v3")
     print("=" * 65)
 
-    wb = openpyxl.load_workbook(software_xlsx, read_only=True, data_only=True)
+    curriculum_wb   = openpyxl.load_workbook(curriculum_xlsx, read_only=True, data_only=True)
+    teacher_name_wb = openpyxl.load_workbook(teacher_name_xlsx, read_only=True, data_only=True)
+    teachers_wb     = openpyxl.load_workbook(teachers_xlsx, read_only=True, data_only=True)
+    students_wb     = openpyxl.load_workbook(students_xlsx, read_only=True, data_only=True)
 
     curriculum, subjects, teachers, teacher_subjects = \
-        _load_curriculum_and_teachers(wb)
+        _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb, teachers_wb)
     rooms    = _load_rooms(rooms_xlsx)
-    students = _load_students(wb)
+    students = _load_students(students_wb)
 
     if active_semesters:
         before   = len(students)

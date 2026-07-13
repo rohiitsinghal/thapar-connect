@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -28,9 +28,11 @@ from auth import router as student_auth_router
 from faculty_auth import router as faculty_auth_router
 from main import (
     ACTIVE_PARITY,
+    DATA_DIR,
     EXTRACTED_JSON,
     MASTER_TIMETABLE_XLSX,
     OUTPUT_DIR,
+    REQUIRED_DATA_FILES,
     TIMETABLE_JSON,
     generate_timetable,
 )
@@ -71,6 +73,67 @@ class GenerateTimetablePayload(BaseModel):
 
 def _ensure_output_dir() -> None:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+def _ensure_data_dir() -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def _data_files_status() -> dict[str, Any]:
+    status = {name: os.path.exists(path) for name, path in REQUIRED_DATA_FILES.items()}
+    status["all_present"] = all(status.values())
+    return status
+
+
+async def _save_upload(field_name: str, upload: UploadFile) -> None:
+    if field_name not in REQUIRED_DATA_FILES:
+        raise HTTPException(status_code=400, detail=f"Unknown data file field '{field_name}'")
+    if not upload.filename or not upload.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{field_name}' must be an .xlsx file (got '{upload.filename}')",
+        )
+    _ensure_data_dir()
+    dest_path = REQUIRED_DATA_FILES[field_name]
+    contents = await upload.read()
+    with open(dest_path, "wb") as handle:
+        handle.write(contents)
+
+
+@app.get("/timetable-data/status")
+def timetable_data_status() -> dict[str, Any]:
+    """Which of the 5 required uploaded files are currently on disk."""
+    return _data_files_status()
+
+
+@app.post("/timetable-data/upload")
+async def upload_timetable_data(
+    students: Optional[UploadFile] = File(default=None),
+    curriculum: Optional[UploadFile] = File(default=None),
+    teacher_name: Optional[UploadFile] = File(default=None),
+    teachers: Optional[UploadFile] = File(default=None),
+    rooms: Optional[UploadFile] = File(default=None),
+) -> dict[str, Any]:
+    """Accepts any subset of the 5 required data files (field name is what
+    matters — the original filename the admin picked is irrelevant) and
+    saves each into the fixed data/ path main.py expects."""
+    provided = {
+        "students": students,
+        "curriculum": curriculum,
+        "teacher_name": teacher_name,
+        "teachers": teachers,
+        "rooms": rooms,
+    }
+    saved = []
+    for field_name, upload in provided.items():
+        if upload is not None:
+            await _save_upload(field_name, upload)
+            saved.append(field_name)
+
+    if not saved:
+        raise HTTPException(status_code=400, detail="No files were provided")
+
+    return {"saved": saved, "status": _data_files_status()}
 
 
 def _load_publish_settings() -> dict[str, Any]:
@@ -146,7 +209,18 @@ def generate(payload: GenerateTimetablePayload) -> dict[str, Any]:
         if value is not None:
             sa_params[key] = value
 
-    timetable = generate_timetable(active_parity=selected_parity, sa_params=sa_params)
+    status = _data_files_status()
+    if not status["all_present"]:
+        missing = [name for name in REQUIRED_DATA_FILES if not status[name]]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot generate: missing uploaded file(s): {', '.join(missing)}",
+        )
+
+    try:
+        timetable = generate_timetable(active_parity=selected_parity, sa_params=sa_params)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "status": "generated",
         "active_parity": selected_parity,
