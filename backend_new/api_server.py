@@ -49,7 +49,7 @@ SETTINGS_JSON = os.path.join(OUTPUT_DIR, "timetable_publish_settings.json")
 DEFAULT_SEMESTER_WEEKS = 16
 
 
-@asynccontextmanager
+@contextlib.asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     from rds import ensure_schema
 
