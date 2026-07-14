@@ -104,10 +104,9 @@ def t1_no_student_clashes(by_student):
                 slot_map[sk].append(_uid(c))
         for slot_key, ids in slot_map.items():
             if len(ids) > 1:
-                day, time = slot_key.split("|")
                 clashes.append(
                     f"Student {enr} ({s['name']}): "
-                    f"{' & '.join(ids)} clash at {day} {time}"
+                    f"{' & '.join(ids)} clash at slot_index {slot_key}"
                 )
 
     if clashes:
@@ -142,10 +141,9 @@ def t2_no_teacher_clashes(timetable):
     for teacher, slot_map in teacher_slots.items():
         for slot_key, ids in slot_map.items():
             if len(ids) > 1:
-                day, time = slot_key.split("|")
                 clashes.append(
                     f"Teacher '{teacher}': "
-                    f"{' & '.join(ids)} clash at {day} {time}"
+                    f"{' & '.join(ids)} clash at slot_index {slot_key}"
                 )
 
     if clashes:
@@ -179,10 +177,9 @@ def t3_no_room_clashes(timetable):
     for room, slot_map in room_slots.items():
         for slot_key, ids in slot_map.items():
             if len(ids) > 1:
-                day, time = slot_key.split("|")
                 clashes.append(
                     f"Room {room}: "
-                    f"{' & '.join(ids)} clash at {day} {time}"
+                    f"{' & '.join(ids)} clash at slot_index {slot_key}"
                 )
 
     if clashes:

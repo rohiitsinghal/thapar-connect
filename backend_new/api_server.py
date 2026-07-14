@@ -6,10 +6,11 @@ generation, and read the latest timetable JSON.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
-from contextlib import asynccontextmanager
+import contextlib
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Optional
 
@@ -39,6 +40,9 @@ from main import (
     TIMETABLE_JSON,
     generate_timetable,
 )
+from master_sync import import_master_timetable
+from genMaster import build_master
+from test import run_tests
 
 SETTINGS_JSON = os.path.join(OUTPUT_DIR, "timetable_publish_settings.json")
 
@@ -275,6 +279,44 @@ def master_timetable() -> FileResponse:
         filename="master_timetable.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+@app.post("/timetable/master")
+async def upload_master_timetable(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Admin re-uploads master_timetable.xlsx (same file downloaded via
+    GET /timetable/master, possibly hand-edited). Parses it, rewrites
+    timetable.json, regenerates the styled xlsx, and runs test.py so we
+    know whether the edit broke any hard constraints."""
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail=f"Must be an .xlsx file (got '{file.filename}')")
+
+    _ensure_output_dir()
+    tmp_path = os.path.join(OUTPUT_DIR, "_uploaded_master_timetable.xlsx")
+    contents = await file.read()
+    with open(tmp_path, "wb") as handle:
+        handle.write(contents)
+
+    try:
+        timetable = import_master_timetable(tmp_path, EXTRACTED_JSON, TIMETABLE_JSON)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    build_master(timetable, MASTER_TIMETABLE_XLSX)
+
+    # Run test.py against the rebuilt timetable.json and capture its output.
+    report_buffer = io.StringIO()
+    with contextlib.redirect_stdout(report_buffer):
+        tests_passed = run_tests(TIMETABLE_JSON)
+
+    return {
+        "status": "updated_from_manual_upload",
+        "timetable": timetable,
+        "tests_passed": tests_passed,
+        "test_report": report_buffer.getvalue(),
+    }
 
 
 if __name__ == "__main__":
