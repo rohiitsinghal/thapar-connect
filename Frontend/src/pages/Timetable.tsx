@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Download,
   FileSpreadsheet,
+  FileUp,
   ImageDown,
   Pencil,
   RefreshCw,
@@ -182,6 +183,31 @@ const uploadDataFiles = async (files: Partial<Record<DataFileKey, File>>): Promi
   return result.status;
 };
 
+// ── Master timetable upload ─────────────────────────────────────────────
+// POST /timetable/master accepts a hand-edited copy of the same
+// master_timetable.xlsx downloaded via "Download XLSX" (merged-cell grid,
+// produced by genMaster.py) and rebuilds the published timetable from it
+// directly — no separate editable file format, no scheduler re-run.
+
+const uploadEditedMasterTimetable = async (
+  file: File
+): Promise<{ timetable: TimetablePayload; tests_passed: boolean; test_report: string }> => {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE}/timetable/master`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? "Failed to upload edited master timetable");
+  }
+
+  return await response.json();
+};
+
 const Timetable = () => {
   const session = getUserSession();
   const initialPublishSettings = useMemo(() => getTimetablePublishSettings(), []);
@@ -214,6 +240,14 @@ const Timetable = () => {
   const [selectedDataFiles, setSelectedDataFiles] = useState<Partial<Record<DataFileKey, File>>>({});
   const [uploadingDataFiles, setUploadingDataFiles] = useState(false);
   const [dataFileError, setDataFileError] = useState<string | null>(null);
+
+  // ── Master timetable upload state ───────────────────────────────────
+  const [uploadingEditedMaster, setUploadingEditedMaster] = useState(false);
+  const [editedMasterFile, setEditedMasterFile] = useState<File | null>(null);
+  const [editedMasterError, setEditedMasterError] = useState<string | null>(null);
+  const [editedMasterSuccess, setEditedMasterSuccess] = useState<string | null>(null);
+  const [testReport, setTestReport] = useState<string | null>(null);
+  const editedMasterInputRef = useRef<HTMLInputElement>(null);
 
   const refreshDataFileStatus = async () => {
     try {
@@ -261,6 +295,45 @@ const Timetable = () => {
   };
 
   const allDataFilesUploaded = dataFileStatus?.all_present ?? false;
+
+  const handleEditedMasterFileSelect = (fileList: FileList | null) => {
+    setEditedMasterFile(fileList?.[0] ?? null);
+    setEditedMasterError(null);
+    setEditedMasterSuccess(null);
+    setTestReport(null);
+  };
+
+  const handleUploadEditedMaster = async () => {
+    if (!editedMasterFile) {
+      setEditedMasterError("Choose the edited master timetable file first.");
+      return;
+    }
+
+    setUploadingEditedMaster(true);
+    setEditedMasterError(null);
+    setEditedMasterSuccess(null);
+    setTestReport(null);
+    try {
+      const { timetable: updated, tests_passed, test_report } = await uploadEditedMasterTimetable(editedMasterFile);
+      setTimetable(updated);
+      setTestReport(test_report);
+      setEditedMasterSuccess(
+        tests_passed
+          ? "Timetable updated. All tests passed."
+          : "Timetable updated. Some tests failed — see report below."
+      );
+      setEditedMasterFile(null);
+      if (editedMasterInputRef.current) {
+        editedMasterInputRef.current.value = "";
+      }
+    } catch (uploadError) {
+      setEditedMasterError(
+        uploadError instanceof Error ? uploadError.message : "Failed to apply edited master timetable"
+      );
+    } finally {
+      setUploadingEditedMaster(false);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -838,6 +911,50 @@ const Timetable = () => {
               <p className="text-xs text-muted-foreground">
                 Publishing stores the semester window for the frontend. Generating runs the backend scheduler and refreshes the master timetable.
               </p>
+
+              <div className="h-px bg-border" />
+
+              {/* ── Manual master-timetable edit round-trip ─────────── */}
+              <div>
+                <p className="text-sm font-medium text-foreground mb-1">Manual Timetable Edits</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Use the <strong>Download XLSX</strong> button above to get the master timetable, hand-edit
+                  rooms/days/times/teachers directly inside that file in Excel, then re-upload it here. Don't add,
+                  delete, or reorder rows/columns — only edit the text inside a class's own cell (the room/teacher
+                  line). Re-uploading replaces the published timetable directly; it does not re-run the scheduler.
+                </p>
+
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                  <Input
+                    ref={editedMasterInputRef}
+                    type="file"
+                    accept=".xlsx,.xlsm"
+                    className="text-xs h-9 file:mr-2 file:text-xs max-w-sm"
+                    onChange={(event) => handleEditedMasterFileSelect(event.target.files)}
+                  />
+                  <Button
+                    variant="default"
+                    onClick={handleUploadEditedMaster}
+                    disabled={uploadingEditedMaster || !editedMasterFile}
+                    className="gap-2 w-fit"
+                  >
+                    <FileUp className="h-4 w-4" />
+                    {uploadingEditedMaster ? "Applying..." : "Upload Edited Master Timetable"}
+                  </Button>
+                </div>
+
+                {editedMasterError ? (
+                  <p className="text-sm text-destructive mt-2 whitespace-pre-wrap">{editedMasterError}</p>
+                ) : null}
+                {editedMasterSuccess ? (
+                  <p className="text-sm mt-2 text-foreground">{editedMasterSuccess}</p>
+                ) : null}
+                {testReport ? (
+                  <pre className="mt-2 max-h-96 overflow-auto text-[10px] leading-snug bg-secondary/20 border border-border rounded-md p-3 whitespace-pre-wrap">
+                    {testReport}
+                  </pre>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         ) : null}
