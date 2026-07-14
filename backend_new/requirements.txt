@@ -5,3 +5,5 @@ bcrypt
 pyjwt
 openpyxl
 python-dotenv
+python-multipart
+pymysql

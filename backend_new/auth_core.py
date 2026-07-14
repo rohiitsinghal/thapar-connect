@@ -27,7 +27,9 @@ def issue_token(subject: str, role: str) -> str:
     return jwt.encode(payload, jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-def subject_from_token(authorization: str, expected_role: str) -> str:
+def claims_from_token(authorization: str) -> dict[str, Any]:
+    """Decode a bearer token without enforcing a specific role, for endpoints
+    that accept multiple roles (e.g. student/faculty/admin)."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
 
@@ -37,7 +39,15 @@ def subject_from_token(authorization: str, expected_role: str) -> str:
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
 
-    if claims.get("role") != expected_role or not claims.get("sub"):
+    if not claims.get("role") or not claims.get("sub"):
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    return claims
+
+
+def subject_from_token(authorization: str, expected_role: str) -> str:
+    claims = claims_from_token(authorization)
+    if claims.get("role") != expected_role:
         raise HTTPException(status_code=401, detail="Invalid session")
 
     return claims["sub"]

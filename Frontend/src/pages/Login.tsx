@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import heroCampus from "@/assets/thapar.jpg";
 import { setUserSession } from "@/lib/auth";
+import { loginAdmin } from "@/lib/adminAuthApi";
 import { loginFaculty } from "@/lib/facultyAuthApi";
 import { loginStudent } from "@/lib/studentAuthApi";
 
@@ -88,14 +89,19 @@ const Login = () => {
           return;
         }
 
-        setLoginError("");
-        setUserSession({
-          role: "admin",
-          displayName: "Admin",
-          identifier: trimmedIdentifier,
-        });
-
-        navigate("/admin");
+        try {
+          const result = await loginAdmin(trimmedIdentifier, trimmedPassword);
+          setLoginError("");
+          setUserSession({
+            role: "admin",
+            displayName: "Admin",
+            identifier: trimmedIdentifier,
+            token: result.token,
+          });
+          navigate("/admin");
+        } catch (error) {
+          setLoginError(error instanceof Error ? error.message : "Login failed. Please try again.");
+        }
         return;
       }
 

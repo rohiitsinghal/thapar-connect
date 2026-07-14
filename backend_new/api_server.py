@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -24,7 +25,9 @@ if BASE_DIR not in sys.path:
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
+from admin_auth import router as admin_auth_router
 from auth import router as student_auth_router
+from course_material import router as course_material_router
 from faculty_auth import router as faculty_auth_router
 from main import (
     ACTIVE_PARITY,
@@ -41,7 +44,20 @@ SETTINGS_JSON = os.path.join(OUTPUT_DIR, "timetable_publish_settings.json")
 
 DEFAULT_SEMESTER_WEEKS = 16
 
-app = FastAPI(title="Thapar Connect Timetable API")
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    from rds import ensure_schema
+
+    try:
+        ensure_schema()
+    except Exception as exc:  # noqa: BLE001 - startup should not crash the whole API over RDS being unreachable
+        print(f"Warning: could not verify/create course_materials table in RDS: {exc}")
+
+    yield
+
+
+app = FastAPI(title="Thapar Connect Timetable API", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,6 +69,8 @@ app.add_middleware(
 
 app.include_router(student_auth_router)
 app.include_router(faculty_auth_router)
+app.include_router(admin_auth_router)
+app.include_router(course_material_router)
 
 
 class PublishSettingsPayload(BaseModel):

@@ -8,7 +8,7 @@ export type UserSession = {
   role: UserRole;
   displayName: string;
   identifier: string;
-  /** JWT issued by the backend. Only set for roles authenticated against DynamoDB (currently: student). */
+  /** JWT issued by the backend, used to authorize course-material requests. */
   token?: string;
 };
 

@@ -4,14 +4,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Upload, ArrowLeft, FileText } from "lucide-react";
+import { Upload, ArrowLeft, FileText, Trash2, Loader2 } from "lucide-react";
 import { getUserSession } from "@/lib/auth";
 import { getCourseCatalog, getCoursesForFaculty, type CourseCatalogItem } from "@/lib/courseData";
 import { findFacultyProfile, getPeopleData, type PeopleProfile } from "@/lib/peopleData";
+import {
+  deleteCourseMaterial,
+  listCourseMaterial,
+  uploadCourseMaterial,
+  type CourseMaterialItem,
+} from "@/lib/courseMaterialApi";
 
-type MaterialItem = {
-  fileName: string;
-  uploadedAt: string;
+const formatSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 const CourseMaterialManage = () => {
@@ -28,29 +35,13 @@ const CourseMaterialManage = () => {
     [catalog, courseCode, facultyProfile]
   );
 
+  const [title, setTitle] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadedItems, setUploadedItems] = useState<MaterialItem[]>([]);
+  const [materials, setMaterials] = useState<CourseMaterialItem[]>([]);
+  const [materialsLoading, setMaterialsLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
   const course = taughtCourses[0] || null;
-
-  const storageKey = `material_${session?.identifier || ""}_${courseCode}`;
-
-  const handleUpload = () => {
-    if (!session || !course || !selectedFile) {
-      return;
-    }
-
-    const updated = [
-      {
-        fileName: selectedFile.name,
-        uploadedAt: new Date().toLocaleString(),
-      },
-      ...uploadedItems,
-    ];
-
-    window.localStorage.setItem(storageKey, JSON.stringify(updated));
-    setUploadedItems(updated);
-    setSelectedFile(null);
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -64,8 +55,8 @@ const CourseMaterialManage = () => {
           setCatalog(resolvedCatalog);
           setFacultyProfile(resolvedFacultyProfile);
         }
-      } catch (error) {
-        console.error(error);
+      } catch (loadCatalogError) {
+        console.error(loadCatalogError);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -80,25 +71,60 @@ const CourseMaterialManage = () => {
     };
   }, [session?.identifier, session?.role]);
 
-  useEffect(() => {
-    if (!session || !course) {
-      setUploadedItems([]);
+  const refreshMaterials = async () => {
+    if (!session?.token || !course) {
       return;
     }
 
-    const key = `material_${session.identifier}_${courseCode}`;
-    const saved = window.localStorage.getItem(key);
-    if (!saved) {
-      setUploadedItems([]);
-      return;
-    }
-
+    setMaterialsLoading(true);
+    setError("");
     try {
-      setUploadedItems(JSON.parse(saved) as MaterialItem[]);
-    } catch {
-      setUploadedItems([]);
+      const items = await listCourseMaterial(courseCode, session.token);
+      setMaterials(items);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Unable to load material.");
+    } finally {
+      setMaterialsLoading(false);
     }
-  }, [courseCode, course, session]);
+  };
+
+  useEffect(() => {
+    void refreshMaterials();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseCode, course, session?.token]);
+
+  const handleUpload = async () => {
+    if (!session?.token || !course || !selectedFile || !title.trim()) {
+      return;
+    }
+
+    setUploading(true);
+    setError("");
+    try {
+      await uploadCourseMaterial(courseCode, title.trim(), selectedFile, session.token);
+      setTitle("");
+      setSelectedFile(null);
+      await refreshMaterials();
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDelete = async (materialId: string) => {
+    if (!session?.token) {
+      return;
+    }
+
+    setError("");
+    try {
+      await deleteCourseMaterial(courseCode, materialId, session.token);
+      await refreshMaterials();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Delete failed.");
+    }
+  };
 
   if (loading) {
     return (
@@ -152,6 +178,16 @@ const CourseMaterialManage = () => {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="study-material-title">Title</Label>
+              <Input
+                id="study-material-title"
+                placeholder="e.g. Module 3: Graphs and Traversal Algorithms"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="study-material-file">Study Material File</Label>
               <Input
                 id="study-material-file"
@@ -160,26 +196,37 @@ const CourseMaterialManage = () => {
               />
             </div>
 
-            <Button onClick={handleUpload} disabled={!selectedFile}>
-              <Upload className="w-4 h-4 mr-2" />
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+            <Button onClick={handleUpload} disabled={!selectedFile || !title.trim() || uploading}>
+              {uploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
               Upload Material
             </Button>
 
             <div className="space-y-3">
               <h3 className="font-semibold text-foreground">Uploaded Files</h3>
-              {uploadedItems.length === 0 ? (
+              {materialsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading uploaded files...</p>
+              ) : materials.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No files uploaded yet for this course.</p>
               ) : (
-                uploadedItems.map((item, index) => (
+                materials.map((item) => (
                   <div
-                    key={`${item.fileName}-${index}`}
+                    key={item.material_id}
                     className="flex items-center justify-between p-3 border border-border rounded-md"
                   >
                     <div className="flex items-center gap-2">
                       <FileText className="w-4 h-4 text-primary" />
-                      <span className="text-sm text-foreground">{item.fileName}</span>
+                      <div>
+                        <p className="text-sm text-foreground">{item.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {item.file_name} · {formatSize(item.size_bytes)} · {new Date(item.uploaded_at).toLocaleString()}
+                        </p>
+                      </div>
                     </div>
-                    <span className="text-xs text-muted-foreground">{item.uploadedAt}</span>
+                    <Button variant="ghost" size="sm" onClick={() => handleDelete(item.material_id)}>
+                      <Trash2 className="w-4 h-4 text-destructive" />
+                    </Button>
                   </div>
                 ))
               )}
