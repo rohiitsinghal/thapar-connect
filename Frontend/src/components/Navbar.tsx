@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Calendar, LayoutDashboard, BookOpen, DoorOpen, Clock, Users, Menu, X, ChevronDown, UserRound, Search } from "lucide-react";
+import { Calendar, LayoutDashboard, BookOpen, DoorOpen, Clock, Menu, X, ChevronDown, UserRound, Search, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,18 +12,27 @@ import { clearUserSession, getUserSession } from "@/lib/auth";
 
 const navItems = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-  { label: "Profile", path: "/profile", icon: UserRound },
   { label: "Search", path: "/admin", icon: Search },
+  { label: "Manage People", path: "/admin/people", icon: Users },
   { label: "Timetable", path: "/timetable", icon: Calendar },
   { label: "Courses", path: "/courses", icon: BookOpen },
   { label: "Rooms", path: "/rooms", icon: DoorOpen },
   { label: "Exam Schedule", path: "/exams", icon: Clock },
-  { label: "Student Sections", path: "/sections", icon: Users },
+  { label: "Profile", path: "/profile", icon: UserRound },
 ];
 
 const studentVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses", "/exams"]);
-const instructorVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses", "/exams", "/sections"]);
-const adminVisiblePaths = new Set(["/dashboard", "/profile", "/admin", "/timetable", "/courses", "/rooms", "/exams", "/sections"]);
+const instructorVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses", "/exams"]);
+const adminVisiblePaths = new Set([
+  "/dashboard",
+  "/profile",
+  "/admin",
+  "/admin/people",
+  "/timetable",
+  "/courses",
+  "/rooms",
+  "/exams",
+]);
 
 const Navbar = () => {
   const location = useLocation();

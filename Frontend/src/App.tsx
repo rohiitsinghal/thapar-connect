@@ -11,12 +11,12 @@ import Timetable from "./pages/Timetable";
 import Courses from "./pages/Courses";
 import CourseMaterial from "./pages/CourseMaterial";
 import CourseMaterialManage from "./pages/CourseMaterialManage";
+import CourseRoster from "./pages/CourseRoster";
 import Rooms from "./pages/Rooms";
 import Exams from "./pages/Exams";
-import Sections from "./pages/Sections";
-import SectionStudents from "./pages/SectionStudents";
 import Profile from "./pages/Profile";
 import AdminSearch from "./pages/AdminSearch";
+import AdminPeople from "./pages/AdminPeople";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -35,14 +35,14 @@ const AppContent = () => {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/admin" element={<AdminSearch />} />
+        <Route path="/admin/people" element={<AdminPeople />} />
         <Route path="/timetable" element={<Timetable />} />
         <Route path="/courses" element={<Courses />} />
         <Route path="/courses/material" element={<CourseMaterial />} />
         <Route path="/courses/manage-material" element={<CourseMaterialManage />} />
+        <Route path="/courses/roster" element={<CourseRoster />} />
         <Route path="/rooms" element={<Rooms />} />
         <Route path="/exams" element={<Exams />} />
-        <Route path="/sections" element={<Sections />} />
-        <Route path="/sections/students" element={<SectionStudents />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>

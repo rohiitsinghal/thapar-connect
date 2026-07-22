@@ -9,11 +9,11 @@ import { getUserSession } from "@/lib/auth";
 import { findFacultyProfile, findStudentProfile, getPeopleData, type PeopleProfile } from "@/lib/peopleData";
 import {
   getCourseCatalog,
-  getCoursesForAdmin,
   getCoursesForFaculty,
   getCoursesForStudent,
   type CourseCatalogItem,
 } from "@/lib/courseData";
+import { fetchCourseCatalog } from "@/lib/coursesApi";
 
 const Courses = () => {
   const [search, setSearch] = useState("");
@@ -32,6 +32,28 @@ const Courses = () => {
 
     const loadCatalog = async () => {
       try {
+        if (isAdmin) {
+          // Admin browses the DynamoDB-backed catalog directly, rather than the
+          // client-side workbook parse used for the student/faculty heuristic views.
+          const courses = await fetchCourseCatalog();
+          if (!cancelled) {
+            setCatalog(
+              courses.map((course) => ({
+                courseCode: course.course_code,
+                title: course.title,
+                semester: Number(course.semester),
+                credits: course.credits,
+                facultyName: course.facultyName,
+                facultyCode: course.facultyCode,
+                programs: course.programs,
+                categories: course.categories,
+                remarks: [],
+              }))
+            );
+          }
+          return;
+        }
+
         const [peopleData, courseCatalog] = await Promise.all([getPeopleData(), getCourseCatalog()]);
         const resolvedStudentProfile =
           session?.role === "student" ? findStudentProfile(peopleData, session.identifier) : null;
@@ -60,11 +82,11 @@ const Courses = () => {
     return () => {
       cancelled = true;
     };
-  }, [session?.identifier, session?.role]);
+  }, [isAdmin, session?.identifier, session?.role]);
 
   const visibleCourses = useMemo(() => {
-    if (isAdmin || !session) {
-      return getCoursesForAdmin(catalog);
+    if (isAdmin) {
+      return catalog;
     }
 
     if (isInstructor) {
@@ -76,7 +98,7 @@ const Courses = () => {
     }
 
     return catalog;
-  }, [catalog, facultyProfile, isAdmin, isInstructor, isStudent, session, studentProfile]);
+  }, [catalog, facultyProfile, isAdmin, isInstructor, isStudent, studentProfile]);
 
   const filtered = visibleCourses.filter(
     (course) =>
@@ -86,11 +108,17 @@ const Courses = () => {
       course.programs.join(" ").toLowerCase().includes(search.toLowerCase())
   );
 
+  const canViewRoster = isInstructor || isAdmin;
+
   const openStudyMaterial = (courseCode: string) => {
     const url = isInstructor
       ? `/courses/manage-material?code=${encodeURIComponent(courseCode)}`
       : `/courses/material?code=${encodeURIComponent(courseCode)}`;
     window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const openRoster = (courseCode: string) => {
+    window.open(`/courses/roster?code=${encodeURIComponent(courseCode)}`, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -149,15 +177,36 @@ const Courses = () => {
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">{course.facultyName || "Faculty not listed"}</p>
                 {course.facultyCode ? <p className="text-[11px] text-muted-foreground mt-1">Faculty Code: {course.facultyCode}</p> : null}
-                {isInstructor ? (
-                  <p className="text-xs text-primary mt-3 font-medium">Upload Study Material</p>
-                ) : (
-                  <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {isInstructor ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openStudyMaterial(course.courseCode);
+                      }}
+                    >
+                      Upload Study Material
+                    </Button>
+                  ) : (
                     <Button size="sm" variant="outline" onClick={() => openStudyMaterial(course.courseCode)}>
                       Open Study Material
                     </Button>
-                  </div>
-                )}
+                  )}
+                  {canViewRoster ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openRoster(course.courseCode);
+                      }}
+                    >
+                      View Enrolled Students
+                    </Button>
+                  ) : null}
+                </div>
               </CardContent>
             </Card>
           ))}

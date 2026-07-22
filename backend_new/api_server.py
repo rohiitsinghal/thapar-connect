@@ -29,7 +29,9 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 from admin_auth import router as admin_auth_router
 from auth import router as student_auth_router
 from course_material import router as course_material_router
+from courses import router as courses_router
 from faculty_auth import router as faculty_auth_router
+from people_admin import router as people_admin_router
 from main import (
     ACTIVE_PARITY,
     DATA_DIR,
@@ -75,6 +77,8 @@ app.include_router(student_auth_router)
 app.include_router(faculty_auth_router)
 app.include_router(admin_auth_router)
 app.include_router(course_material_router)
+app.include_router(courses_router)
+app.include_router(people_admin_router)
 
 
 class PublishSettingsPayload(BaseModel):
@@ -191,12 +195,27 @@ def _save_publish_settings(settings: PublishSettingsPayload) -> dict[str, Any]:
     return payload
 
 
+_timetable_cache: dict[str, Any] | None = None
+_timetable_cache_mtime: float | None = None
+
+
 def _load_timetable() -> dict[str, Any]:
+    """Cached in memory, keyed by the file's mtime, so a burst of requests
+    (e.g. everyone checking timetable/results at once) doesn't hit disk +
+    re-parse a multi-MB JSON file on every single request. Automatically
+    invalidates whenever anything rewrites timetable.json."""
+    global _timetable_cache, _timetable_cache_mtime
+
     if not os.path.exists(TIMETABLE_JSON):
         raise HTTPException(status_code=404, detail="Timetable has not been generated yet")
 
-    with open(TIMETABLE_JSON, encoding="utf-8") as handle:
-        return json.load(handle)
+    mtime = os.path.getmtime(TIMETABLE_JSON)
+    if _timetable_cache is None or mtime != _timetable_cache_mtime:
+        with open(TIMETABLE_JSON, encoding="utf-8") as handle:
+            _timetable_cache = json.load(handle)
+        _timetable_cache_mtime = mtime
+
+    return _timetable_cache
 
 
 @app.get("/health")

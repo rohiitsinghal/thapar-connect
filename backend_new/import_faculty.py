@@ -75,7 +75,7 @@ def iter_faculty_rows(path: str) -> Iterable[dict[str, str]]:
             }
 
 
-def import_faculty(path: str, default_password: str, dry_run: bool = False) -> None:
+def import_faculty(path: str, default_password: str, dry_run: bool = False) -> int:
     deduped: dict[str, dict[str, str]] = {}
     for record in iter_faculty_rows(path):
         deduped[record["employee_code"]] = record  # later sheets win on duplicate employee codes
@@ -86,7 +86,7 @@ def import_faculty(path: str, default_password: str, dry_run: bool = False) -> N
         for record in list(deduped.values())[:5]:
             print(record)
         print("Dry run: nothing was written to DynamoDB.")
-        return
+        return 0
 
     default_password_hash = bcrypt.hashpw(default_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     table = get_faculty_table()
@@ -121,6 +121,7 @@ def import_faculty(path: str, default_password: str, dry_run: bool = False) -> N
 
     print(f"Done. Wrote/updated {written} faculty members in DynamoDB table '{table.table_name}'.")
     print(f"New faculty default to password '{default_password}' and must change it on first login.")
+    return written
 
 
 def main() -> None:
