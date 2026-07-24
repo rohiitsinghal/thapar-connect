@@ -14,7 +14,7 @@ const Footer = () => (
           </div>
           <p className="text-primary-foreground/70 max-w-md text-sm leading-relaxed">
             Comprehensive Academic Scheduling System for Thapar Institute of Engineering & Technology.
-            Streamlining course timetabling, exam scheduling, and room management.
+            Streamlining course timetabling and room management.
           </p>
         </div>
         <div>

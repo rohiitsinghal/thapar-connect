@@ -12,7 +12,6 @@ const statCards = [
   { icon: BookOpen, label: "Total Courses", value: "352", change: "+12 this semester", color: "text-primary" },
   { icon: DoorOpen, label: "Active Rooms", value: "124", change: "98% utilization", color: "text-accent" },
   { icon: Users, label: "Students Enrolled", value: "15,247", change: "+8.3% YoY", color: "text-crimson-light" },
-  { icon: Clock, label: "Exams Scheduled", value: "186", change: "All conflict-free", color: "text-gold" },
 ];
 
 const conflicts = [
@@ -132,13 +131,6 @@ const Dashboard = () => {
         value: `${studentsInCourses}`,
         change: "Across your classes",
         color: "text-crimson-light",
-      },
-      {
-        icon: Clock,
-        label: "Exam Schedules",
-        value: `${facultyCourseCodes.size}`,
-        change: "For your courses",
-        color: "text-gold",
       },
     ];
   }, [isInstructor, facultyCourses, facultyCourseCodes, timetable]);

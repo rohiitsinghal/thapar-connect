@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { ArrowRight, Calendar, BookOpen, DoorOpen, Clock, Users, BarChart3, CheckCircle2 } from "lucide-react";
+import { ArrowRight, Calendar, BookOpen, DoorOpen, Users, BarChart3, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import heroCampus from "@/assets/thapar.jpg";
 import Footer from "@/components/Footer";
@@ -10,11 +10,6 @@ const features = [
     icon: Calendar,
     title: "Course Timetabling",
     description: "Automated scheduling that minimizes conflicts and optimizes room utilization across all departments.",
-  },
-  {
-    icon: Clock,
-    title: "Exam Scheduling",
-    description: "Conflict-free examination timetables with proper spacing and room allocation for all courses.",
   },
   {
     icon: DoorOpen,
@@ -78,8 +73,8 @@ const Index = () => {
               ThaparTime
             </h1>
             <p className="text-lg md:text-xl text-primary-foreground/75 max-w-2xl mx-auto mb-10 leading-relaxed font-body">
-              University timetabling solution for Thapar Institute of Engineering & Technology. 
-              Automated course scheduling, exam planning, and room management — all in one platform.
+              University timetabling solution for Thapar Institute of Engineering & Technology.
+              Automated course scheduling and room management — all in one platform.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button asChild size="lg" className="bg-accent hover:bg-gold-light text-accent-foreground font-semibold text-base px-8 h-12 shadow-elevated">
