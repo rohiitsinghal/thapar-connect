@@ -8,7 +8,7 @@ export type StudentLoginResult = {
   major: string;
   minor: string;
   must_change_password: boolean;
-};
+};  
 
 class StudentAuthError extends Error {}
 
@@ -41,7 +41,7 @@ export const changeStudentPassword = async (
   newPassword: string,
 ): Promise<void> => {
   const response = await fetch(`${API_BASE_URL}/auth/student/change-password`, {
-    method: "POST",
+    method: "POST", 
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
