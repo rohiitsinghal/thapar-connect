@@ -3628,6 +3628,13 @@
         "TM3415"
       ]
     },
+    "NOCODE_TM4405_1": {
+      "teacher_code": "NOCODE_TM4405_1",
+      "teacher_name": "All BBA Faculties",
+      "courses": [
+        "TM4405"
+      ]
+    },
     "AKR": {
       "teacher_code": "AKR",
       "teacher_name": "ANIL KUMAR",
@@ -3724,7 +3731,7 @@
     },
     "AS": {
       "teacher_code": "AS",
-      "teacher_name": "Anuj Shukla",
+      "teacher_name": "Dr. Anuj Shukla",
       "courses": [
         "TO2418",
         "TO3420",
@@ -3902,7 +3909,7 @@
     },
     "SAE": {
       "teacher_code": "SAE",
-      "teacher_name": "Dr. Sheikh Adil Edrisi",
+      "teacher_name": "Sheikh Adil Edrisi",
       "courses": [
         "NE3405"
       ]
@@ -6877,6 +6884,7 @@
     "TM3414": "Visiting Faculty",
     "TM3415": "Dr. Aarushi Mahajan",
     "TM4408": "Dr. Kavitha Pradeep",
+    "TM4405": "All BBA Faculties",
     "UBT406": "ANIL KUMAR",
     "UBT408": "VIKAS HANDA",
     "UBT409": "SIDDHARTH SHARMA",
@@ -6964,8 +6972,7 @@
     "SC2418": "Rabi Prakash",
     "SC2408": "Shah Khatoon",
     "SC2419": "Shivangi Narayan",
-    "SC3409": "Aruna B.",
-    "TM4405": "All BBA Faculties"
+    "SC3409": "Aruna B."
   },
   "enrollment_groups": {
     "sem4|B Com|CASP": [

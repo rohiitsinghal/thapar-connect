@@ -75,7 +75,7 @@ app.add_middleware(
 
 app.include_router(student_auth_router)
 app.include_router(faculty_auth_router)
-app.include_router(admin_auth_router)
+app.include_router(admin_auth_router) 
 app.include_router(course_material_router)
 app.include_router(courses_router)
 app.include_router(people_admin_router)
@@ -128,7 +128,7 @@ async def _save_upload(field_name: str, upload: UploadFile) -> None:
 
 @app.get("/timetable-data/status")
 def timetable_data_status() -> dict[str, Any]:
-    """Which of the 5 required uploaded files are currently on disk."""
+    """Which of the 4 required uploaded files are currently on disk."""
     return _data_files_status()
 
 
@@ -136,17 +136,15 @@ def timetable_data_status() -> dict[str, Any]:
 async def upload_timetable_data(
     students: Optional[UploadFile] = File(default=None),
     curriculum: Optional[UploadFile] = File(default=None),
-    teacher_name: Optional[UploadFile] = File(default=None),
     teachers: Optional[UploadFile] = File(default=None),
     rooms: Optional[UploadFile] = File(default=None),
 ) -> dict[str, Any]:
-    """Accepts any subset of the 5 required data files (field name is what
+    """Accepts any subset of the 4 required data files (field name is what
     matters — the original filename the admin picked is irrelevant) and
     saves each into the fixed data/ path main.py expects."""
     provided = {
         "students": students,
         "curriculum": curriculum,
-        "teacher_name": teacher_name,
         "teachers": teachers,
         "rooms": rooms,
     }

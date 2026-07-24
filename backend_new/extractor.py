@@ -197,7 +197,14 @@ def _expand_to_units(subjects):
 # Loaders
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb, teachers_wb):
+def _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb):
+    """teacher_name_wb is the single 'teacher_ name' workbook — the sole
+    source of teacher records now that the 'teachers' fallback sheet has
+    been removed. Any row (from the curriculum sheet or this workbook)
+    that has a teacher name but no teacher_code gets a synthetic
+    'NOCODE_...' placeholder code instead of being silently dropped, so
+    that teacher still appears in the teachers dict and still gets
+    clash-checked by the scheduler."""
     print("\n  [1/3] Loading curriculum + teachers ...")
 
     ws        = _get_sheet(curriculum_wb, 'curriculum')
@@ -209,10 +216,15 @@ def _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb, teachers_wb):
     teacher_subjects_raw = defaultdict(list)   # course_code -> [teacher names], ordered & deduped
     teacher_courses  = defaultdict(set)
     teacher_info     = {}
+    _nocode_counter  = {"n": 0}
 
     def _add_teacher(code, name):
         if name and name not in teacher_subjects_raw[code]:
             teacher_subjects_raw[code].append(name)
+
+    def _placeholder_code(course_code):
+        _nocode_counter["n"] += 1
+        return f"NOCODE_{course_code}_{_nocode_counter['n']}"
 
     for r in data_rows:
         program = _canonical(str(r[1]).strip() if r[1] else "")
@@ -252,11 +264,14 @@ def _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb, teachers_wb):
         if code not in subjects:
             subjects[code] = Subject(code, title, L, T, P, credits)
 
-        if teacher_name and teacher_code:
+        if teacher_name:
+            if not teacher_code:
+                teacher_code = _placeholder_code(code)
             _add_teacher(code, teacher_name)
             teacher_info[teacher_code] = teacher_name
             teacher_courses[teacher_code].add(code)
 
+    # 'teacher_ name' sheet — the only teacher data source now.
     ws_tn = _get_sheet(teacher_name_wb, 'teacher_ name')
     for r in list(ws_tn.iter_rows(values_only=True))[1:]:
         if not any(c for c in r): continue
@@ -264,25 +279,11 @@ def _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb, teachers_wb):
         name = str(r[1]).strip() if r[1] else ""
         tc   = str(r[2]).strip() if r[2] else ""
         if not code or not name: continue
+        if not tc:
+            tc = _placeholder_code(code)
         _add_teacher(code, name)
-        if tc:
-            teacher_info[tc] = name
-            teacher_courses[tc].add(code)
-
-    ws_t = _get_sheet(teachers_wb, 'teachers')
-    for r in list(ws_t.iter_rows(values_only=True))[1:]:
-        if not any(c for c in r): continue
-        code = str(r[0]).strip() if r[0] else ""
-        name = str(r[1]).strip() if r[1] else ""
-        tc   = str(r[2]).strip() if r[2] else ""
-        if not code or not name or code == "nan" or name == "nan": continue
-        # This sheet is a fallback source — only use it for codes that got
-        # no teacher at all from the more authoritative sheets above.
-        if code not in teacher_subjects_raw:
-            _add_teacher(code, name)
-        if tc and tc not in ("nan", ""):
-            teacher_info[tc] = name
-            teacher_courses[tc].add(code)
+        teacher_info[tc] = name
+        teacher_courses[tc].add(code)
 
     teachers = {
         tc: Teacher(tc, name, sorted(teacher_courses[tc]))
@@ -516,19 +517,21 @@ def _to_json(data):
     }
 
 
-def load_data(students_xlsx, curriculum_xlsx, teacher_name_xlsx, teachers_xlsx,
+def load_data(students_xlsx, curriculum_xlsx, teacher_name_xlsx,
               rooms_xlsx, output_json, active_semesters=None):
+    """teacher_name_xlsx is the single teacher-roster workbook ('teacher_
+    name' sheet). The old 'teachers' fallback file has been removed —
+    teachers with no code get a synthetic placeholder code instead."""
     print("=" * 65)
     print("  TSLAS DATA EXTRACTOR  v3")
     print("=" * 65)
 
     curriculum_wb   = openpyxl.load_workbook(curriculum_xlsx, read_only=True, data_only=True)
     teacher_name_wb = openpyxl.load_workbook(teacher_name_xlsx, read_only=True, data_only=True)
-    teachers_wb     = openpyxl.load_workbook(teachers_xlsx, read_only=True, data_only=True)
     students_wb     = openpyxl.load_workbook(students_xlsx, read_only=True, data_only=True)
 
     curriculum, subjects, teachers, teacher_subjects = \
-        _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb, teachers_wb)
+        _load_curriculum_and_teachers(curriculum_wb, teacher_name_wb)
     rooms    = _load_rooms(rooms_xlsx)
     students = _load_students(students_wb)
 

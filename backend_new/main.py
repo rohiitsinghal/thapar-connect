@@ -35,17 +35,20 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 STUDENTS_XLSX     = os.path.join(DATA_DIR, "students.xlsx")
 CURRICULUM_XLSX   = os.path.join(DATA_DIR, "curriculum.xlsx")
 TEACHER_NAME_XLSX = os.path.join(DATA_DIR, "teacher_name.xlsx")
-TEACHERS_XLSX     = os.path.join(DATA_DIR, "teachers.xlsx")
 ROOMS_XLSX        = os.path.join(DATA_DIR, "rooms.xlsx")
 
 # Every file above must exist (uploaded via the admin UI / api_server.py)
 # before generate_timetable() can run.
+#
+# NOTE: the old separate "teachers.xlsx" fallback file has been removed.
+# api_server.py's upload field "teachers" now writes straight to
+# teacher_name.xlsx, and extractor.py no longer reads a second file —
+# teachers with no code get a synthetic placeholder code instead.
 REQUIRED_DATA_FILES = {
-    "students":     STUDENTS_XLSX,
-    "curriculum":   CURRICULUM_XLSX,
-    "teacher_name": TEACHER_NAME_XLSX,
-    "teachers":     TEACHERS_XLSX,
-    "rooms":        ROOMS_XLSX,
+    "students": STUDENTS_XLSX,
+    "curriculum": CURRICULUM_XLSX,
+    "teachers": TEACHER_NAME_XLSX,
+    "rooms": ROOMS_XLSX,
 }
 
 EXTRACTED_JSON = os.path.join(OUTPUT_DIR, "extracted_data.json")
@@ -110,7 +113,7 @@ def generate_timetable(active_parity=ACTIVE_PARITY, sa_params=None):
     if missing:
         raise FileNotFoundError(
             "Missing uploaded data file(s): " + ", ".join(missing) +
-            ". Upload all 5 files (students, curriculum, teacher_name, teachers, rooms) "
+            ". Upload all 4 files (students, curriculum, teachers, rooms) "
             "before generating the timetable."
         )
 
@@ -120,7 +123,6 @@ def generate_timetable(active_parity=ACTIVE_PARITY, sa_params=None):
         students_xlsx=STUDENTS_XLSX,
         curriculum_xlsx=CURRICULUM_XLSX,
         teacher_name_xlsx=TEACHER_NAME_XLSX,
-        teachers_xlsx=TEACHERS_XLSX,
         rooms_xlsx=ROOMS_XLSX,
         output_json=EXTRACTED_JSON,
         active_semesters=active_sems,
@@ -152,7 +154,7 @@ if __name__ == "__main__":
     for name, path in REQUIRED_DATA_FILES.items():
         if not os.path.exists(path):
             print(f"\n  ✗ ERROR: Cannot find '{name}' at:\n    {path}")
-            print(f"  Make sure all 5 Excel files are in the data/ folder.\n")
+            print(f"  Make sure all 4 Excel files are in the data/ folder.\n")
             raise SystemExit(1)
 
     active_sems = [2, 4, 6] if ACTIVE_PARITY == "even" else [1, 3, 5]

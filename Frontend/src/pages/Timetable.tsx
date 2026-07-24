@@ -17,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import Footer from "@/components/Footer";
 import { getUserSession } from "@/lib/auth";
@@ -50,15 +51,20 @@ type StudentCellOverride = {
 // Field name is what the backend matches on (api_server.py's
 // /timetable-data/upload endpoint) — the admin's original filename doesn't
 // matter at all, so labels/hints below are just for the admin's benefit.
-type DataFileKey = "students" | "curriculum" | "teacher_name" | "teachers" | "rooms";
+//
+// NOTE: "teacher_name" and "teachers" used to be two separate uploads.
+// They were near-duplicate data, so they've been merged into a single
+// "teachers" file (the old fallback-sheet behavior has been removed —
+// teachers with no code are now tagged with a placeholder code on the
+// backend instead of being pulled from a second file).
+type DataFileKey = "students" | "curriculum" | "teachers" | "rooms";
 
 type DataFileStatus = Record<DataFileKey, boolean> & { all_present: boolean };
 
 const DATA_FILE_FIELDS: { key: DataFileKey; label: string; hint: string }[] = [
   { key: "students", label: "Students", hint: "enrollment_no, name, email, major, minor, semester" },
   { key: "curriculum", label: "Curriculum", hint: "program, semester, course_code, title, L, T, P, credits, offered_as, teacher, teacher_code" },
-  { key: "teacher_name", label: "Teacher Name", hint: "teacher_code, teacher_name" },
-  { key: "teachers", label: "Teachers", hint: "teacher_code, teacher_name (fallback source)" },
+  { key: "teachers", label: "Teachers", hint: "teacher_code, teacher_name (teacher_code is optional)" },
   { key: "rooms", label: "Rooms", hint: "room_id, ..., capacity" },
 ];
 
@@ -236,10 +242,16 @@ const Timetable = () => {
   const timetableCardRef = useRef<HTMLDivElement>(null);
 
   // ── Data-file upload state ──────────────────────────────────────────
+  // Decluttered flow: pick which file you're uploading from a dropdown,
+  // choose the file, hit upload — one file at a time instead of 4 tiles
+  // fighting for space.
   const [dataFileStatus, setDataFileStatus] = useState<DataFileStatus | null>(null);
-  const [selectedDataFiles, setSelectedDataFiles] = useState<Partial<Record<DataFileKey, File>>>({});
+  const [dataFilesOpen, setDataFilesOpen] = useState(false);
+  const [selectedDataFileKey, setSelectedDataFileKey] = useState<DataFileKey>("students");
+  const [pendingDataFile, setPendingDataFile] = useState<File | null>(null);
   const [uploadingDataFiles, setUploadingDataFiles] = useState(false);
   const [dataFileError, setDataFileError] = useState<string | null>(null);
+  const dataFileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Master timetable upload state ───────────────────────────────────
   const [uploadingEditedMaster, setUploadingEditedMaster] = useState(false);
@@ -266,27 +278,26 @@ const Timetable = () => {
     }
   }, [session?.role]);
 
-  const handleDataFileSelect = (key: DataFileKey, fileList: FileList | null) => {
-    const file = fileList?.[0];
-    setSelectedDataFiles((prev) => ({ ...prev, [key]: file ?? undefined }));
+  const handleDataFileSelect = (fileList: FileList | null) => {
+    setPendingDataFile(fileList?.[0] ?? null);
+    setDataFileError(null);
   };
 
   const handleUploadDataFiles = async () => {
-    const filesToUpload = Object.fromEntries(
-      Object.entries(selectedDataFiles).filter(([, file]) => Boolean(file))
-    ) as Partial<Record<DataFileKey, File>>;
-
-    if (Object.keys(filesToUpload).length === 0) {
-      setDataFileError("Choose at least one file to upload.");
+    if (!pendingDataFile) {
+      setDataFileError("Choose a file to upload.");
       return;
     }
 
     setUploadingDataFiles(true);
     setDataFileError(null);
     try {
-      const status = await uploadDataFiles(filesToUpload);
+      const status = await uploadDataFiles({ [selectedDataFileKey]: pendingDataFile });
       setDataFileStatus(status);
-      setSelectedDataFiles({});
+      setPendingDataFile(null);
+      if (dataFileInputRef.current) {
+        dataFileInputRef.current.value = "";
+      }
     } catch (uploadError) {
       setDataFileError(uploadError instanceof Error ? uploadError.message : "Failed to upload data files");
     } finally {
@@ -295,6 +306,9 @@ const Timetable = () => {
   };
 
   const allDataFilesUploaded = dataFileStatus?.all_present ?? false;
+  const missingDataFileLabels = DATA_FILE_FIELDS.filter((f) => !(dataFileStatus?.[f.key] ?? false)).map(
+    (f) => f.label
+  );
 
   const handleEditedMasterFileSelect = (fileList: FileList | null) => {
     setEditedMasterFile(fileList?.[0] ?? null);
@@ -460,7 +474,7 @@ const Timetable = () => {
 
   const handlePublishAndGenerate = async () => {
     if (!allDataFilesUploaded) {
-      setError("Upload all 5 data files (students, curriculum, teacher_name, teachers, rooms) before generating.");
+      setError("Upload all 4 data files (students, curriculum, teachers, rooms) before generating.");
       return;
     }
 
@@ -778,66 +792,107 @@ const Timetable = () => {
         {session?.role === "admin" ? (
           <Card className="mb-6 shadow-card">
             <CardContent className="p-4 flex flex-col gap-5">
-              {/* ── 5-file data upload area ─────────────────────────── */}
+              {/* ── Data files: one button + dropdown instead of 4 tiles ── */}
               <div>
-                <p className="text-sm font-medium text-foreground mb-1">Data Files</p>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Upload all 5 files (any filename is fine — just make sure the column layout inside each
-                  matches). Re-uploading a file replaces the previous one.
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Data Files</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {allDataFilesUploaded
+                        ? "All 4 data files are present — ready to generate."
+                        : `Waiting on: ${missingDataFileLabels.join(", ")}`}
+                    </p>
+                  </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                  {DATA_FILE_FIELDS.map(({ key, label, hint }) => {
-                    const isUploaded = dataFileStatus?.[key] ?? false;
-                    const isSelected = Boolean(selectedDataFiles[key]);
-                    return (
-                      <div key={key} className="rounded-xl border border-border p-3 bg-secondary/30">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <p className="text-xs font-semibold text-foreground">{label}</p>
-                          {isUploaded ? (
-                            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-muted-foreground/50 shrink-0" />
-                          )}
-                        </div>
-                        <p className="text-[10px] text-muted-foreground mb-2 leading-snug">{hint}</p>
+                  <Popover open={dataFilesOpen} onOpenChange={setDataFilesOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="gap-2">
+                        <Upload className="h-4 w-4" />
+                        Manage Data Files
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 space-y-4" align="end">
+                      <div>
+                        <p className="text-sm font-medium mb-2">Upload a data file</p>
+                        <Select
+                          value={selectedDataFileKey}
+                          onValueChange={(value) => {
+                            setSelectedDataFileKey(value as DataFileKey);
+                            setPendingDataFile(null);
+                            setDataFileError(null);
+                            if (dataFileInputRef.current) {
+                              dataFileInputRef.current.value = "";
+                            }
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose a file type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {DATA_FILE_FIELDS.map(({ key, label }) => (
+                              <SelectItem key={key} value={key}>
+                                <span className="flex items-center gap-2">
+                                  {dataFileStatus?.[key] ? (
+                                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                                  ) : (
+                                    <XCircle className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+                                  )}
+                                  {label}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground mt-2 leading-snug">
+                          {DATA_FILE_FIELDS.find((f) => f.key === selectedDataFileKey)?.hint}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
                         <Input
+                          ref={dataFileInputRef}
                           type="file"
                           accept=".xlsx,.xlsm"
-                          className="text-xs h-8 file:mr-2 file:text-xs"
-                          onChange={(event) => handleDataFileSelect(key, event.target.files)}
+                          className="text-xs h-9 file:mr-2 file:text-xs"
+                          onChange={(event) => handleDataFileSelect(event.target.files)}
                         />
-                        {isSelected ? (
-                          <p className="text-[10px] text-primary mt-1 truncate">
-                            Selected: {selectedDataFiles[key]?.name}
-                          </p>
-                        ) : null}
+                        <Button
+                          onClick={handleUploadDataFiles}
+                          disabled={uploadingDataFiles || !pendingDataFile}
+                          className="w-full gap-2"
+                        >
+                          <Upload className="h-4 w-4" />
+                          {uploadingDataFiles ? "Uploading..." : "Upload"}
+                        </Button>
                       </div>
-                    );
-                  })}
-                </div>
 
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 mt-3">
-                  <Button
-                    variant="outline"
-                    onClick={handleUploadDataFiles}
-                    disabled={uploadingDataFiles || Object.keys(selectedDataFiles).length === 0}
-                    className="gap-2 w-fit"
-                  >
-                    <Upload className="h-4 w-4" />
-                    {uploadingDataFiles ? "Uploading..." : "Upload Selected Files"}
-                  </Button>
-                  <p className="text-xs text-muted-foreground">
-                    {allDataFilesUploaded
-                      ? "All 5 data files are present — ready to generate."
-                      : "Waiting on: " +
-                        DATA_FILE_FIELDS.filter((f) => !(dataFileStatus?.[f.key] ?? false))
-                          .map((f) => f.label)
-                          .join(", ")}
-                  </p>
-                </div>
+                      {dataFileError ? <p className="text-xs text-destructive">{dataFileError}</p> : null}
 
-                {dataFileError ? <p className="text-sm text-destructive mt-2">{dataFileError}</p> : null}
+                      <div className="h-px bg-border" />
+
+                      <div className="space-y-1.5">
+                        {DATA_FILE_FIELDS.map(({ key, label }) => (
+                          <div key={key} className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">{label}</span>
+                            {dataFileStatus?.[key] ? (
+                              <span className="flex items-center gap-1 text-emerald-600">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Uploaded
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-muted-foreground/70">
+                                <XCircle className="h-3.5 w-3.5" /> Missing
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        Re-uploading a file type replaces the previous one. Any filename is fine as long as the
+                        column layout matches.
+                      </p>
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </div>
 
               <div className="h-px bg-border" />
@@ -902,7 +957,7 @@ const Timetable = () => {
                   onClick={handlePublishAndGenerate}
                   disabled={generating || !allDataFilesUploaded}
                   className="gap-2 lg:ml-auto"
-                  title={!allDataFilesUploaded ? "Upload all 5 data files first" : undefined}
+                  title={!allDataFilesUploaded ? "Upload all 4 data files first" : undefined}
                 >
                   <Sparkles className="h-4 w-4" />
                   {generating ? "Generating..." : "Publish & Generate"}
