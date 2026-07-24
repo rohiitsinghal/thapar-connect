@@ -13,7 +13,6 @@ import CourseMaterial from "./pages/CourseMaterial";
 import CourseMaterialManage from "./pages/CourseMaterialManage";
 import CourseRoster from "./pages/CourseRoster";
 import Rooms from "./pages/Rooms";
-import Exams from "./pages/Exams";
 import Profile from "./pages/Profile";
 import AdminSearch from "./pages/AdminSearch";
 import AdminPeople from "./pages/AdminPeople";
@@ -42,7 +41,6 @@ const AppContent = () => {
         <Route path="/courses/manage-material" element={<CourseMaterialManage />} />
         <Route path="/courses/roster" element={<CourseRoster />} />
         <Route path="/rooms" element={<Rooms />} />
-        <Route path="/exams" element={<Exams />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>

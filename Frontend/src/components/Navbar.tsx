@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Calendar, LayoutDashboard, BookOpen, DoorOpen, Clock, Menu, X, ChevronDown, UserRound, Search, Users } from "lucide-react";
+import { Calendar, LayoutDashboard, BookOpen, DoorOpen, Menu, X, ChevronDown, UserRound, Search, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,12 +17,11 @@ const navItems = [
   { label: "Timetable", path: "/timetable", icon: Calendar },
   { label: "Courses", path: "/courses", icon: BookOpen },
   { label: "Rooms", path: "/rooms", icon: DoorOpen },
-  { label: "Exam Schedule", path: "/exams", icon: Clock },
   { label: "Profile", path: "/profile", icon: UserRound },
 ];
 
-const studentVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses", "/exams"]);
-const instructorVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses", "/exams"]);
+const studentVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses"]);
+const instructorVisiblePaths = new Set(["/dashboard", "/profile", "/timetable", "/courses"]);
 const adminVisiblePaths = new Set([
   "/dashboard",
   "/profile",
@@ -31,7 +30,6 @@ const adminVisiblePaths = new Set([
   "/timetable",
   "/courses",
   "/rooms",
-  "/exams",
 ]);
 
 const Navbar = () => {
