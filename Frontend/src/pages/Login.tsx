@@ -84,13 +84,9 @@ const Login = () => {
 
     try {
       if (selectedRole === "admin") {
-        if (trimmedIdentifier.toLowerCase() !== "admin@thapar.edu" || trimmedPassword !== "qwertyuiop") {
-          setLoginError("Use admin@thapar.edu with password qwertyuiop.");
-          return;
-        }
-
         try {
           const result = await loginAdmin(trimmedIdentifier, trimmedPassword);
+
           setLoginError("");
           setUserSession({
             role: "admin",
@@ -98,16 +94,25 @@ const Login = () => {
             identifier: trimmedIdentifier,
             token: result.token,
           });
+
           navigate("/admin");
         } catch (error) {
-          setLoginError(error instanceof Error ? error.message : "Login failed. Please try again.");
+          setLoginError(
+            error instanceof Error
+              ? error.message
+              : "Login failed. Please try again."
+          );
         }
         return;
       }
 
       if (selectedRole === "student") {
         try {
-          const result = await loginStudent(trimmedIdentifier, trimmedPassword);
+          const result = await loginStudent(
+            trimmedIdentifier,
+            trimmedPassword
+          );
+
           setLoginError("");
           setUserSession({
             role: selectedRole,
@@ -115,15 +120,24 @@ const Login = () => {
             identifier: result.roll_no,
             token: result.token,
           });
+
           navigate("/profile");
         } catch (error) {
-          setLoginError(error instanceof Error ? error.message : "Login failed. Please try again.");
+          setLoginError(
+            error instanceof Error
+              ? error.message
+              : "Login failed. Please try again."
+          );
         }
         return;
       }
 
       try {
-        const result = await loginFaculty(trimmedIdentifier, trimmedPassword);
+        const result = await loginFaculty(
+          trimmedIdentifier,
+          trimmedPassword
+        );
+
         setLoginError("");
         setUserSession({
           role: selectedRole,
@@ -131,9 +145,14 @@ const Login = () => {
           identifier: result.employee_code,
           token: result.token,
         });
+
         navigate("/profile");
       } catch (error) {
-        setLoginError(error instanceof Error ? error.message : "Login failed. Please try again.");
+        setLoginError(
+          error instanceof Error
+            ? error.message
+            : "Login failed. Please try again."
+        );
       }
     } catch (error) {
       console.error(error);

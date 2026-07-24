@@ -28,3 +28,22 @@ export const loginAdmin = async (email: string, password: string): Promise<Admin
 
   return (await response.json()) as AdminLoginResult;
 };
+
+export const changeAdminPassword = async (
+  token: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> => {
+  const response = await fetch(`${API_BASE_URL}/auth/admin/change-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+
+  if (!response.ok) {
+    throw new AdminAuthError(await readErrorDetail(response));
+  }
+};

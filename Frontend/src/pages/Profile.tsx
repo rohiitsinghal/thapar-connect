@@ -8,10 +8,11 @@ import { Label } from "@/components/ui/label";
 import Footer from "@/components/Footer";
 import { clearUserSession, getUserSession } from "@/lib/auth";
 import { findFacultyProfile, findStudentProfile, getPeopleData, PeopleProfile } from "@/lib/peopleData";
+import { changeAdminPassword } from "@/lib/adminAuthApi";
 import { changeFacultyPassword } from "@/lib/facultyAuthApi";
 import { changeStudentPassword } from "@/lib/studentAuthApi";
 import { toast } from "sonner";
-import { LockKeyhole, Mail, UserRound, ArrowLeft, LogOut } from "lucide-react";
+import { LockKeyhole, Mail, UserRound, ArrowLeft, LogOut, CheckCircle2 } from "lucide-react";
 
 const formatFieldLabel = (value: string): string =>
   value
@@ -19,6 +20,20 @@ const formatFieldLabel = (value: string): string =>
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (character) => character.toUpperCase());
+
+// Admin has no workbook-backed profile (no Students/Faculty sheet row), so we
+// synthesize a minimal one for display purposes instead of leaving `profile`
+// as null — a null profile previously made the change-password handler
+// silently no-op for admins.
+const buildAdminProfile = (identifier: string): PeopleProfile => ({
+  role: "faculty",
+  primaryId: identifier,
+  displayName: "Admin",
+  email: identifier,
+  sourceSheet: "admin",
+  loginAliases: [identifier.toUpperCase()],
+  details: {},
+});
 
 const Profile = () => {
   const session = useMemo(() => getUserSession(), []);
@@ -29,12 +44,20 @@ const Profile = () => {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [passwordUpdated, setPasswordUpdated] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadProfile = async () => {
       if (!session) {
+        setLoading(false);
+        return;
+      }
+
+      // Admin isn't in the workbook data, so skip the fetch entirely.
+      if (session.role === "admin") {
+        setProfile(buildAdminProfile(session.identifier));
         setLoading(false);
         return;
       }
@@ -70,19 +93,31 @@ const Profile = () => {
     };
   }, [session]);
 
-  const roleLabel = session?.role === "student" ? "Student" : session?.role === "instructor" ? "Faculty" : "User";
-  const identifierLabel = session?.role === "student" ? "Roll No" : "Employee Code";
+  const roleLabel =
+    session?.role === "student"
+      ? "Student"
+      : session?.role === "instructor"
+      ? "Faculty"
+      : session?.role === "admin"
+      ? "Admin"
+      : "User";
+
+  const identifierLabel =
+    session?.role === "student" ? "Roll No" : session?.role === "admin" ? "Admin Email" : "Employee Code";
 
   const handlePasswordChange = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!session || !profile) {
+    // Admin has no workbook profile, so don't gate on `profile` for that role.
+    if (!session || (!profile && session.role !== "admin")) {
       return;
     }
 
     const trimmedCurrentPassword = currentPassword.trim();
     const trimmedNewPassword = newPassword.trim();
     const trimmedConfirmPassword = confirmPassword.trim();
+
+    setPasswordUpdated(false);
 
     if (!trimmedCurrentPassword || !trimmedNewPassword || !trimmedConfirmPassword) {
       setPageError("Fill in all password fields before saving.");
@@ -110,6 +145,8 @@ const Profile = () => {
 
       if (session.role === "student") {
         await changeStudentPassword(session.token, trimmedCurrentPassword, trimmedNewPassword);
+      } else if (session.role === "admin") {
+        await changeAdminPassword(session.token, trimmedCurrentPassword, trimmedNewPassword);
       } else {
         await changeFacultyPassword(session.token, trimmedCurrentPassword, trimmedNewPassword);
       }
@@ -117,6 +154,7 @@ const Profile = () => {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      setPasswordUpdated(true);
       toast.success("Password updated");
     } catch (error) {
       console.error(error);
@@ -259,6 +297,13 @@ const Profile = () => {
               <CardTitle className="font-display text-xl">Change Password</CardTitle>
             </CardHeader>
             <CardContent>
+              {passwordUpdated ? (
+                <div className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Password updated successfully.
+                </div>
+              ) : null}
+
               <form className="space-y-4" onSubmit={handlePasswordChange}>
                 <div className="space-y-2">
                   <Label htmlFor="current-password">Current Password</Label>
@@ -269,7 +314,10 @@ const Profile = () => {
                       type="password"
                       className="pl-9"
                       value={currentPassword}
-                      onChange={(event) => setCurrentPassword(event.target.value)}
+                      onChange={(event) => {
+                        setCurrentPassword(event.target.value);
+                        setPasswordUpdated(false);
+                      }}
                     />
                   </div>
                 </div>
@@ -280,7 +328,10 @@ const Profile = () => {
                     id="new-password"
                     type="password"
                     value={newPassword}
-                    onChange={(event) => setNewPassword(event.target.value)}
+                    onChange={(event) => {
+                      setNewPassword(event.target.value);
+                      setPasswordUpdated(false);
+                    }}
                   />
                 </div>
 
@@ -290,16 +341,20 @@ const Profile = () => {
                     id="confirm-password"
                     type="password"
                     value={confirmPassword}
-                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    onChange={(event) => {
+                      setConfirmPassword(event.target.value);
+                      setPasswordUpdated(false);
+                    }}
                   />
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  After changing the password, use the new value on the next login for this roll number or employee code.
+                  After changing the password, use the new value on the next login for this roll number, employee
+                  code, or admin email.
                 </p>
 
                 <Button type="submit" className="w-full" disabled={saving}>
-                  Save Password
+                  {saving ? "Saving..." : "Save Password"}
                 </Button>
               </form>
             </CardContent>
