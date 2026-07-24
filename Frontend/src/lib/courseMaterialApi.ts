@@ -7,7 +7,7 @@ export type CourseMaterialItem = {
   content_type: string;
   size_bytes: number;
   uploaded_by_name: string;
-  uploaded_at: string;
+  uploaded_at: string; 
 };
 
 class CourseMaterialError extends Error {}
